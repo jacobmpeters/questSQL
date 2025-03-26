@@ -37,7 +37,7 @@ QuestSQL aims to revolutionize how health questionnaires are developed, administ
 ```mermaid
 graph LR
     subgraph Development
-        DDL[SQL DDL Statements]
+        DDL[SQL DDL Library]
         API[REST API Layer]
         SDK[Language SDKs]
         MD[Markdown Interface]
@@ -55,7 +55,7 @@ graph LR
     end
 
     DDL --> SQLite
-    API --> SQLite
+    API --> DDL
     SDK --> API
     MD --> API
 
@@ -68,6 +68,14 @@ graph LR
     style SQLite fill:#bbf,stroke:#333,stroke-width:2px
     style DuckDB fill:#bfb,stroke:#333,stroke-width:2px
 ```
+
+The pipeline shows how QuestSQL integrates different components:
+
+1. **Development Layer**
+   - SQL DDL Library as the primary development tool
+   - REST API as the central interface layer, using DDL for database operations
+   - Language SDKs and Markdown interface connect through the API
+   - All database operations go through the DDL layer
 
 ## Progressive Implementation
 

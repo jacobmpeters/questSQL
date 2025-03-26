@@ -12,14 +12,11 @@ A SQL-first questionnaire development and administration system that unifies que
   - [Response Validation](#3-response-validation)
   - [Grid-based Questions](#4-grid-based-questions)
   - [Standardized Medical Concepts](#5-standardized-medical-concepts)
-- [OMOP Vocabulary Mapping](#omop-vocabulary-mapping)
 - [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
 - [Complete Questionnaire Example](#complete-questionnaire-example)
+- [OMOP Vocabulary Mapping](#omop-vocabulary-mapping)
 - [Self-Documenting Data Model](#self-documenting-data-model)
 - [ID Management and Uniqueness](#id-management-and-uniqueness)
-- [Development Environment](#development-environment)
-- [Contributing](#contributing)
-- [License](#license)
 
 ## Vision
 
@@ -370,87 +367,6 @@ This core model supports:
 3. Response collection
 4. Grid-based questions
 5. Standardized medical concepts
-
-## OMOP Vocabulary Mapping
-
-QuestSQL supports mapping questionnaire responses to OMOP standard vocabularies through a simple mapping system:
-
-### 1. OMOP Vocabulary Sources
-```sql
--- Track OMOP vocabulary sources
-CREATE TABLE vocabulary_sources (
-    source_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    source_name TEXT NOT NULL UNIQUE,  -- e.g., 'SNOMED', 'RxNorm', 'ICD10'
-    source_version TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Example sources
-INSERT INTO vocabulary_sources (source_name, source_version) VALUES
-    ('SNOMED', '5.0'),
-    ('RxNorm', '2023-12-01'),
-    ('ICD10', '2023');
-```
-
-### 2. Response Mapping
-```sql
--- Map responses to OMOP concepts
-CREATE TABLE response_concept_mapping (
-    mapping_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    question_id INTEGER REFERENCES questions(question_id),
-    response_value TEXT NOT NULL,
-    source_id INTEGER REFERENCES vocabulary_sources(source_id),
-    concept_code TEXT NOT NULL,  -- OMOP concept code
-    concept_name TEXT NOT NULL,  -- OMOP concept name
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique mappings per response
-    UNIQUE(question_id, response_value, source_id, concept_code)
-);
-
--- Example mappings
-INSERT INTO response_concept_mapping 
-    (question_id, response_value, source_id, concept_code, concept_name) 
-VALUES
-    -- Map "Yes" response to diabetes diagnosis in SNOMED
-    (1, 'Yes', 1, '73211009', 'Diabetes mellitus'),
-    -- Map "Metformin" response to RxNorm drug
-    (2, 'Metformin', 2, '6809', 'metformin');
-```
-
-### 3. Querying Mapped Data
-```sql
--- View for analyzing mapped responses
-CREATE VIEW mapped_responses AS
-SELECT 
-    r.response_id,
-    q.question_text,
-    r.response_value,
-    rc.concept_code,
-    rc.concept_name,
-    vs.source_name
-FROM responses r
-JOIN questions q ON r.question_id = q.question_id
-LEFT JOIN response_concept_mapping rc ON 
-    r.question_id = rc.question_id AND 
-    r.response_value = rc.response_value
-LEFT JOIN vocabulary_sources vs ON rc.source_id = vs.source_id;
-
--- Example query: Get all medication responses mapped to RxNorm
-SELECT 
-    question_text,
-    response_value,
-    concept_code,
-    concept_name
-FROM mapped_responses
-WHERE source_name = 'RxNorm'
-ORDER BY question_text;
-```
-
-This mapping system provides:
-1. Support for OMOP standard vocabularies
-2. Simple one-to-one response mapping
-3. Easy querying of mapped data
-4. Minimal additional complexity
 
 ## Example Health Questionnaire DDL
 
@@ -890,6 +806,87 @@ The resulting questionnaire includes:
 - Quality of life assessment
 - Open-ended feedback
 
+## OMOP Vocabulary Mapping
+
+QuestSQL supports mapping questionnaire responses to OMOP standard vocabularies through a simple mapping system:
+
+### 1. OMOP Vocabulary Sources
+```sql
+-- Track OMOP vocabulary sources
+CREATE TABLE vocabulary_sources (
+    source_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    source_name TEXT NOT NULL UNIQUE,  -- e.g., 'SNOMED', 'RxNorm', 'ICD10'
+    source_version TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Example sources
+INSERT INTO vocabulary_sources (source_name, source_version) VALUES
+    ('SNOMED', '5.0'),
+    ('RxNorm', '2023-12-01'),
+    ('ICD10', '2023');
+```
+
+### 2. Response Mapping
+```sql
+-- Map responses to OMOP concepts
+CREATE TABLE response_concept_mapping (
+    mapping_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    question_id INTEGER REFERENCES questions(question_id),
+    response_value TEXT NOT NULL,
+    source_id INTEGER REFERENCES vocabulary_sources(source_id),
+    concept_code TEXT NOT NULL,  -- OMOP concept code
+    concept_name TEXT NOT NULL,  -- OMOP concept name
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure unique mappings per response
+    UNIQUE(question_id, response_value, source_id, concept_code)
+);
+
+-- Example mappings
+INSERT INTO response_concept_mapping 
+    (question_id, response_value, source_id, concept_code, concept_name) 
+VALUES
+    -- Map "Yes" response to diabetes diagnosis in SNOMED
+    (1, 'Yes', 1, '73211009', 'Diabetes mellitus'),
+    -- Map "Metformin" response to RxNorm drug
+    (2, 'Metformin', 2, '6809', 'metformin');
+```
+
+### 3. Querying Mapped Data
+```sql
+-- View for analyzing mapped responses
+CREATE VIEW mapped_responses AS
+SELECT 
+    r.response_id,
+    q.question_text,
+    r.response_value,
+    rc.concept_code,
+    rc.concept_name,
+    vs.source_name
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+LEFT JOIN response_concept_mapping rc ON 
+    r.question_id = rc.question_id AND 
+    r.response_value = rc.response_value
+LEFT JOIN vocabulary_sources vs ON rc.source_id = vs.source_id;
+
+-- Example query: Get all medication responses mapped to RxNorm
+SELECT 
+    question_text,
+    response_value,
+    concept_code,
+    concept_name
+FROM mapped_responses
+WHERE source_name = 'RxNorm'
+ORDER BY question_text;
+```
+
+This mapping system provides:
+1. Support for OMOP standard vocabularies
+2. Simple one-to-one response mapping
+3. Easy querying of mapped data
+4. Minimal additional complexity
+
 ## Self-Documenting Data Model
 
 QuestSQL's data model serves as a self-documenting data dictionary, eliminating the need for separate documentation. This is achieved through several key features:
@@ -1018,15 +1015,3 @@ This self-documenting approach ensures:
 QuestSQL enforces data quality through various constraints and validation rules:
 
 [Previous validation section remains the same]
-
-## Development Environment
-
-[Coming soon]
-
-## Contributing
-
-[Coming soon]
-
-## License
-
-[Coming soon]

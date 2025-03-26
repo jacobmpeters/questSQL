@@ -1,8 +1,62 @@
-# Questionnaire Database Schema
+# QuestSQL
 
-This is a response-centric relational data model for health questionnaire data that supports various question types, skip logic, and loop questions.
+A SQL-first questionnaire development and administration system that unifies questionnaire design, data collection, and analysis through a single, well-structured data model.
 
-## Entity Relationship Diagram
+## Vision
+
+QuestSQL aims to revolutionize how health questionnaires are developed, administered, and analyzed by making SQL the foundation of everything. This approach provides several key benefits:
+
+### SQL-First Design
+- All questionnaire logic and relationships are encoded directly in SQL
+- Questionnaire development happens through SQL DDL statements
+- Enables multiple layers of abstraction:
+  - REST APIs for DDL operations
+  - SDKs for simplified interaction
+  - Human-readable markdown language for questionnaire authoring
+
+### Unified Data Model
+- Single source of truth for questionnaire structure and data
+- Eliminates the need for separate data dictionaries
+- Enforces data quality and consistency through database constraints
+- Supports both questionnaire development and data collection
+
+### Client-Side Administration
+- Lightweight SQLite-based UI for survey administration
+- Direct interaction with the data model
+- Real-time response collection and storage
+- No complex middleware required
+
+### Analytics Toolkit
+- DuckDB-powered analysis capabilities
+- Support for arbitrary questionnaire analysis
+- Extensible API for community contributions
+- SDKs for R, Python, and other languages
+
+## Core Principles
+
+1. **Simplicity First**
+   - Minimal dependencies
+   - Clear, straightforward data model
+   - Easy to understand and extend
+
+2. **Quality by Design**
+   - Built-in constraints for data quality
+   - Enforced best practices
+   - Standardized questionnaire structure
+
+3. **Extensibility**
+   - Flexible enough for various study needs
+   - Community-driven development
+   - Multiple abstraction layers
+
+4. **Integration**
+   - Unified development and administration
+   - Seamless analysis capabilities
+   - No separate documentation needed
+
+## Data Model
+
+The schema is designed to support all aspects of questionnaire lifecycle:
 
 ```mermaid
 erDiagram
@@ -80,56 +134,36 @@ erDiagram
     questionnaires ||--o{ responses : "questionnaire_id"
 ```
 
-## Schema Description
-
-The schema consists of the following tables:
-
-1. `questionnaires`: Stores metadata about questionnaires
-   - Primary key: `questionnaire_id`
-   - Contains title, description, version, and timestamps
-
-2. `concepts`: Stores standardized medical concepts
-   - Primary key: `concept_id`
-   - Contains code (unique), name, description, and type
-   - Used for standardized terminology mapping
-
-3. `questions`: Core table for all question types
-   - Primary key: `question_id`
-   - Supports various question types (true/false, multiple choice, grid, etc.)
-   - Handles nested questions and loop questions
-   - Links to questionnaires and concepts
-
-4. `question_options`: Options for multiple choice and select-all questions
-   - Primary key: `option_id`
-   - Contains option text, value, and display order
-   - Links to parent question
-
-5. `grid_columns`: Columns for grid questions
-   - Primary key: `column_id`
-   - Contains column text, value, and display order
-   - Links to parent question
-
-6. `skip_logic`: Conditional question display logic
-   - Primary key: `skip_logic_id`
-   - Defines conditions and target questions
-   - Links source and target questions
-
-7. `responses`: Stores all user responses
-   - Primary key: `response_id`
-   - Links to both questionnaire and specific question
-   - Supports loop questions through `loop_instance`
-
 ## Features
 
-- Supports all common question types:
-  - True/false
-  - Multiple choice
-  - Select-all-that-apply
+- **Questionnaire Development**
+  - SQL-based questionnaire definition
+  - Support for all common question types
+  - Skip logic and conditional questions
+  - Loop questions for repeating sections
   - Grid questions
-  - Free text
-  - Loop questions
-- Skip logic for conditional question display
-- Standardized concept mapping
-- Nested questions
-- Loop questions for repeating sections
-- Timestamps for tracking creation/updates 
+  - Standardized concept mapping
+
+- **Survey Administration**
+  - SQLite-based client UI
+  - Real-time response collection
+  - Offline capability
+  - Data validation
+
+- **Analysis**
+  - DuckDB-powered analytics
+  - Support for arbitrary questionnaires
+  - Extensible analysis toolkit
+  - Multiple language SDKs
+
+## Getting Started
+
+[Coming soon]
+
+## Contributing
+
+[Coming soon]
+
+## License
+
+[Coming soon] 

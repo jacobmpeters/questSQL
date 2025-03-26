@@ -8,10 +8,196 @@ A SQL-first questionnaire development and administration system that unifies que
 - [Core Data Model](#core-data-model)
 - [Progressive Implementation](#progressive-implementation)
   - [Basic Model](#1-basic-model)
+  - [Question Types](#2-question-types)
+  - [Response Validation](#3-response-validation)
+  - [Grid-based Questions](#4-grid-based-questions)
+  - [Standardized Medical Concepts](#5-standardized-medical-concepts)
+- [OMOP Vocabulary Mapping](#omop-vocabulary-mapping)
+- [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
+- [Complete Questionnaire Example](#complete-questionnaire-example)
+- [Self-Documenting Data Model](#self-documenting-data-model)
+- [ID Management and Uniqueness](#id-management-and-uniqueness)
+- [Development Environment](#development-environment)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Vision
+
+QuestSQL aims to revolutionize how health questionnaires are developed, administered, and analyzed by making SQL the foundation of everything. This approach provides several key benefits:
+
+### SQL-First Design
+- All questionnaire logic and relationships are encoded directly in SQL
+- Questionnaire development happens through SQL DDL statements
+- Enables multiple layers of abstraction:
+  - REST APIs for DDL operations
+  - SDKs for simplified interaction
+  - Human-readable markdown language for questionnaire authoring
+
+### Unified Data Model
+- Single source of truth for questionnaire structure and data
+- Eliminates the need for separate data dictionaries
+- Enforces data quality and consistency through database constraints
+- Supports both questionnaire development and data collection
+
+### Client-Side Administration
+- Lightweight SQLite-based UI for survey administration
+- Direct interaction with the data model
+- Real-time response collection and storage
+- No complex middleware required
+
+### Analytics Toolkit
+- DuckDB-powered analysis capabilities
+- Support for arbitrary questionnaire analysis
+- Extensible API for community contributions
+- SDKs for R, Python, and other languages
+
+## System Architecture
+
+```mermaid
+graph LR
+    subgraph Development
+        DDL[SQL DDL Library]
+        API[REST API Layer]
+        SDK[Language SDKs]
+        MD[Markdown Interface]
+    end
+
+    subgraph SQL Backend
+        SQLite[(SQLite Database)]
+    end
+
+    subgraph Analytics
+        DuckDB[(DuckDB Analytics)]
+        R[R Interface]
+        Python[Python Interface]
+    end
+
+    DDL <--> SQLite
+    API --> DDL
+    SDK --> API
+    MD --> API
+
+    SQLite <--> DuckDB
+    DuckDB <--> R
+    DuckDB <--> Python
+
+    style DDL fill:#f9f,stroke:#333,stroke-width:2px
+    style SQLite fill:#bbf,stroke:#333,stroke-width:2px
+    style DuckDB fill:#bfb,stroke:#333,stroke-width:2px
+```
+
+The pipeline shows how QuestSQL integrates different components:
+
+1. **Development Layer**
+   - SQL DDL Library as the primary development tool
+   - REST API as the central interface layer, using DDL for database operations
+   - Language SDKs and Markdown interface connect through the API
+   - All database operations go through the DDL layer
+
+2. **SQL Backend**
+   - SQLite database as the core storage
+   - Direct interaction with DDL Library
+   - Bidirectional data flow with analytics
+
+3. **Analytics Layer**
+   - DuckDB as the core analytics engine
+   - Direct interfaces for R and Python
+   - Bidirectional data flow with SQLite
+
+## Core Data Model
+
+The foundation of QuestSQL is its core data model, which consists of four essential tables:
+
+```mermaid
+erDiagram
+    questionnaires ||--o{ questions : contains
+    questions ||--o{ responses : receives
+    questions ||--o{ question_options : has
+    questions ||--o{ grid_rows : contains
+    questions ||--o{ grid_columns : contains
+    questions ||--o{ concepts : references
+
+    questionnaires {
+        integer questionnaire_id PK
+        text title
+        text description
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    questions {
+        integer question_id PK
+        integer questionnaire_id FK
+        text question_text
+        text question_type
+        boolean is_required
+        integer display_order
+        timestamp created_at
+    }
+
+    responses {
+        integer response_id PK
+        integer questionnaire_id FK
+        integer question_id FK
+        text response_value
+        timestamp created_at
+    }
+
+    question_options {
+        integer question_id FK
+        integer option_id PK
+        text option_text
+        text option_value
+        integer display_order
+    }
+
+    grid_rows {
+        integer question_id FK
+        integer row_id PK
+        text row_text
+        text row_value
+        integer display_order
+    }
+
+    grid_columns {
+        integer question_id FK
+        integer column_id PK
+        text column_text
+        text column_value
+        integer display_order
+    }
+
+    concepts {
+        integer concept_id PK
+        text code
+        text name
+        text description
+        text concept_type
+        timestamp created_at
+    }
+```
+
+This core model supports:
+1. Basic questionnaire structure
+2. Multiple question types
+3. Response collection
+4. Grid-based questions
+5. Standardized medical concepts
+
+## Progressive Implementation
+
+## Table of Contents
+- [Vision](#vision)
+- [System Architecture](#system-architecture)
+- [Core Data Model](#core-data-model)
+- [OMOP Vocabulary Mapping](#omop-vocabulary-mapping)
+- [Progressive Implementation](#progressive-implementation)
+  - [Basic Model](#1-basic-model)
   - [Adding Select-All Questions](#2-adding-select-all-questions)
   - [Adding Grid Questions](#3-adding-grid-questions)
   - [Adding Loop Questions](#4-adding-loop-questions)
 - [ID Management and Uniqueness](#id-management-and-uniqueness)
+- [Clinical Ontology Mapping](#clinical-ontology-mapping)
 - [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
 - [Complete Questionnaire Example](#complete-questionnaire-example)
 - [Self-Documenting Data Model](#self-documenting-data-model)
@@ -185,479 +371,86 @@ This core model supports:
 4. Grid-based questions
 5. Standardized medical concepts
 
-## Progressive Implementation
+## OMOP Vocabulary Mapping
 
-QuestSQL is built incrementally, starting with a basic model and progressively adding more complex features. This approach allows for:
-- Early testing of core functionality
-- Gradual feature addition
-- Continuous validation
-- Clear development path
+QuestSQL supports mapping questionnaire responses to OMOP standard vocabularies through a simple mapping system:
 
-### 1. Basic Model
+### 1. OMOP Vocabulary Sources
+```sql
+-- Track OMOP vocabulary sources
+CREATE TABLE vocabulary_sources (
+    source_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    source_name TEXT NOT NULL UNIQUE,  -- e.g., 'SNOMED', 'RxNorm', 'ICD10'
+    source_version TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-The simplest implementation supports three core question types: true/false, multiple choice, and text.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
+-- Example sources
+INSERT INTO vocabulary_sources (source_name, source_version) VALUES
+    ('SNOMED', '5.0'),
+    ('RxNorm', '2023-12-01'),
+    ('ICD10', '2023');
 ```
 
-#### Basic Schema
+### 2. Response Mapping
 ```sql
-CREATE TABLE questionnaires (
-    questionnaire_id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE questions (
-    question_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
-    question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL CHECK (question_type IN ('true_false', 'multiple_choice', 'text')),
-    is_required BOOLEAN DEFAULT false,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE question_options (
-    option_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    option_text TEXT NOT NULL,
-    option_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE responses (
-    response_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+-- Map responses to OMOP concepts
+CREATE TABLE response_concept_mapping (
+    mapping_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
     question_id INTEGER REFERENCES questions(question_id),
     response_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### 2. Adding Select-All Questions
-
-The next level adds support for select-all-that-apply questions by introducing a separate table for multiple selections.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
-```sql
--- Add select-all responses table
-CREATE TABLE select_all_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    option_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Update question type constraint
-ALTER TABLE questions
-    DROP CONSTRAINT valid_question_type;
-
-ALTER TABLE questions
-    ADD CONSTRAINT valid_question_type
-    CHECK (question_type IN (
-        'true_false',
-        'multiple_choice',
-        'select_all',
-        'text'
-    ));
-```
-
-### 3. Adding Grid Questions
-
-The next level adds support for grid questions with rows and columns.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        int parent_question_id FK
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    grid_columns {
-        int column_id PK
-        int question_id FK
-        string column_text
-        string column_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ questions : "parent_question_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ grid_columns : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
-```sql
--- Add grid columns table
-CREATE TABLE grid_columns (
-    column_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    column_text TEXT NOT NULL,
-    column_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Update question type constraint
-ALTER TABLE questions
-    DROP CONSTRAINT valid_question_type;
-
-ALTER TABLE questions
-    ADD CONSTRAINT valid_question_type
-    CHECK (question_type IN (
-        'true_false',
-        'multiple_choice',
-        'select_all',
-        'grid',
-        'grid_row',
-        'text'
-    ));
-```
-
-### 4. Adding Loop Questions
-
-The final level adds support for repeating sections through loop questions.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        int parent_question_id FK
-        int loop_question_id FK
-        int loop_position
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    grid_columns {
-        int column_id PK
-        int question_id FK
-        string column_text
-        string column_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        int loop_instance
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ questions : "parent_question_id"
-    questions ||--o{ questions : "loop_question_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ grid_columns : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
-```sql
--- Add loop instance to responses
-ALTER TABLE responses
-    ADD COLUMN loop_instance INTEGER;
-
--- Update question type constraint
-ALTER TABLE questions
-    DROP CONSTRAINT valid_question_type;
-
-ALTER TABLE questions
-    ADD CONSTRAINT valid_question_type
-    CHECK (question_type IN (
-        'true_false',
-        'multiple_choice',
-        'select_all',
-        'grid',
-        'grid_row',
-        'loop',
-        'text'
-    ));
-```
-
-## ID Management and Uniqueness
-
-QuestSQL uses a combination of database constraints and sequences to ensure unique IDs across all tables. Here's how we manage IDs:
-
-### 1. Global ID Sequence
-```sql
--- Create a global sequence for all IDs
-CREATE SEQUENCE global_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
--- Function to get next ID
-CREATE OR REPLACE FUNCTION get_next_id()
-RETURNS INTEGER AS $$
-BEGIN
-    RETURN nextval('global_id_seq');
-END;
-$$ LANGUAGE plpgsql;
-```
-
-### 2. ID Constraints
-```sql
--- Questions table with unique ID
-CREATE TABLE questions (
-    question_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    questionnaire_id INTEGER NOT NULL,
-    question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL,
-    is_required BOOLEAN DEFAULT false,
-    display_order INTEGER NOT NULL,
+    source_id INTEGER REFERENCES vocabulary_sources(source_id),
+    concept_code TEXT NOT NULL,  -- OMOP concept code
+    concept_name TEXT NOT NULL,  -- OMOP concept name
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique question IDs within a questionnaire
-    UNIQUE(questionnaire_id, question_id)
+    -- Ensure unique mappings per response
+    UNIQUE(question_id, response_value, source_id, concept_code)
 );
 
--- Responses table with unique ID
-CREATE TABLE responses (
-    response_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    questionnaire_id INTEGER NOT NULL,
-    question_id INTEGER NOT NULL,
-    response_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique responses for a question
-    UNIQUE(questionnaire_id, question_id, response_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
-
--- Concepts table with unique ID
-CREATE TABLE concepts (
-    concept_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    concept_type TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- Example mappings
+INSERT INTO response_concept_mapping 
+    (question_id, response_value, source_id, concept_code, concept_name) 
+VALUES
+    -- Map "Yes" response to diabetes diagnosis in SNOMED
+    (1, 'Yes', 1, '73211009', 'Diabetes mellitus'),
+    -- Map "Metformin" response to RxNorm drug
+    (2, 'Metformin', 2, '6809', 'metformin');
 ```
 
-### 3. Composite Keys for Related Tables
+### 3. Querying Mapped Data
 ```sql
--- Question options with composite key
-CREATE TABLE question_options (
-    question_id INTEGER NOT NULL,
-    option_id INTEGER NOT NULL,
-    option_text TEXT NOT NULL,
-    option_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, option_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+-- View for analyzing mapped responses
+CREATE VIEW mapped_responses AS
+SELECT 
+    r.response_id,
+    q.question_text,
+    r.response_value,
+    rc.concept_code,
+    rc.concept_name,
+    vs.source_name
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+LEFT JOIN response_concept_mapping rc ON 
+    r.question_id = rc.question_id AND 
+    r.response_value = rc.response_value
+LEFT JOIN vocabulary_sources vs ON rc.source_id = vs.source_id;
 
--- Grid questions with composite keys
-CREATE TABLE grid_rows (
-    question_id INTEGER NOT NULL,
-    row_id INTEGER NOT NULL,
-    row_text TEXT NOT NULL,
-    row_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, row_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
-
-CREATE TABLE grid_columns (
-    question_id INTEGER NOT NULL,
-    column_id INTEGER NOT NULL,
-    column_text TEXT NOT NULL,
-    column_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, column_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+-- Example query: Get all medication responses mapped to RxNorm
+SELECT 
+    question_text,
+    response_value,
+    concept_code,
+    concept_name
+FROM mapped_responses
+WHERE source_name = 'RxNorm'
+ORDER BY question_text;
 ```
 
-### 4. Response Validation with Unique Constraints
-```sql
--- Multiple choice responses with unique selection
-CREATE TABLE multiple_choice_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER NOT NULL,
-    option_id INTEGER NOT NULL,
-    is_selected BOOLEAN DEFAULT false,
-    other_text TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure one selection per option per response
-    UNIQUE(response_id, option_id),
-    FOREIGN KEY (response_id) REFERENCES responses(response_id),
-    FOREIGN KEY (question_id, option_id) REFERENCES question_options(question_id, option_id)
-);
-
--- Grid responses with unique cell value
-CREATE TABLE grid_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER NOT NULL,
-    row_id INTEGER NOT NULL,
-    column_id INTEGER NOT NULL,
-    cell_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure one value per cell
-    UNIQUE(response_id, row_id, column_id),
-    FOREIGN KEY (response_id) REFERENCES responses(response_id),
-    FOREIGN KEY (question_id, row_id) REFERENCES grid_rows(question_id, row_id),
-    FOREIGN KEY (question_id, column_id) REFERENCES grid_columns(question_id, column_id)
-);
-```
-
-This ID management approach ensures:
-1. Global uniqueness through the sequence
-2. Referential integrity through foreign keys
-3. Business rule enforcement through unique constraints
-4. Efficient querying through proper indexing
-5. Data consistency across related tables
+This mapping system provides:
+1. Support for OMOP standard vocabularies
+2. Simple one-to-one response mapping
+3. Easy querying of mapped data
+4. Minimal additional complexity
 
 ## Example Health Questionnaire DDL
 
@@ -1220,25 +1013,13 @@ This self-documenting approach ensures:
 4. Standardized concept mapping
 5. Enforced data quality rules
 
-## Implementation Examples
-
-This section demonstrates how to use QuestSQL's DDL to create and manage questionnaires:
-
-[Previous implementation examples section remains the same]
-
-## Validation and Constraints
+## ID Management and Uniqueness
 
 QuestSQL enforces data quality through various constraints and validation rules:
 
 [Previous validation section remains the same]
 
-## Analytics and Export
-
-QuestSQL provides powerful analytics capabilities through DuckDB integration:
-
-[Previous analytics section remains the same]
-
-## Getting Started
+## Development Environment
 
 [Coming soon]
 

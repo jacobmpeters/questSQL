@@ -32,6 +32,129 @@ QuestSQL aims to revolutionize how health questionnaires are developed, administ
 - Extensible API for community contributions
 - SDKs for R, Python, and other languages
 
+## Self-Documenting Data Model
+
+QuestSQL's data model serves as a self-documenting data dictionary, eliminating the need for separate documentation. This is achieved through several key features:
+
+### 1. Explicit Structure
+- Table and column names clearly describe their purpose
+- Foreign key relationships define data dependencies
+- Constraints enforce data rules and validations
+- Comments and descriptions are stored in the database
+
+```sql
+-- Example of self-documenting table structure
+CREATE TABLE questions (
+    question_id INTEGER PRIMARY KEY,
+    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+    question_text TEXT NOT NULL,
+    question_type TEXT NOT NULL CHECK (question_type IN ('true_false', 'multiple_choice', 'text')),
+    is_required BOOLEAN DEFAULT false,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Additional metadata can be added as needed
+    description TEXT,
+    help_text TEXT,
+    validation_rules JSON
+);
+
+-- Add table and column comments
+COMMENT ON TABLE questions IS 'Stores all questions in questionnaires with their properties and constraints';
+COMMENT ON COLUMN questions.question_type IS 'Defines the type of question and its expected response format';
+```
+
+### 2. Standardized Concepts
+- Medical concepts are stored in a dedicated table
+- Each concept has a unique code and description
+- Concepts can be referenced across questions
+- Supports standardized terminology mapping
+
+```sql
+-- Example of concept mapping
+CREATE TABLE concepts (
+    concept_id INTEGER PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    concept_type TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Link questions to concepts
+ALTER TABLE questions
+    ADD COLUMN concept_id INTEGER REFERENCES concepts(concept_id);
+```
+
+### 3. Response Validation
+- Response formats are enforced by constraints
+- Question types define valid response values
+- Validation rules are stored in the database
+- Error messages are part of the schema
+
+```sql
+-- Example of response validation
+CREATE TABLE responses (
+    response_id INTEGER PRIMARY KEY,
+    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+    question_id INTEGER REFERENCES questions(question_id),
+    response_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Validation constraints
+    CONSTRAINT valid_response CHECK (
+        (SELECT question_type FROM questions WHERE question_id = responses.question_id) != 'true_false'
+        OR response_value IN ('true', 'false')
+    )
+);
+```
+
+### 4. Queryable Metadata
+- All structural information is queryable
+- Relationships can be discovered through SQL
+- Constraints and rules are accessible
+- Documentation is always in sync with the data
+
+```sql
+-- Example queries for metadata
+-- Get all questions with their concepts
+SELECT 
+    q.question_text,
+    c.name as concept_name,
+    c.description as concept_description
+FROM questions q
+LEFT JOIN concepts c ON q.concept_id = c.concept_id;
+
+-- Get validation rules for a question
+SELECT 
+    q.question_text,
+    q.validation_rules
+FROM questions q
+WHERE q.validation_rules IS NOT NULL;
+```
+
+### 5. Version Control
+- Schema changes are tracked in SQL
+- Migration scripts document evolution
+- Historical changes are preserved
+- Documentation stays current
+
+```sql
+-- Example of version tracking
+CREATE TABLE schema_versions (
+    version_id INTEGER PRIMARY KEY,
+    version_number TEXT NOT NULL,
+    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    description TEXT,
+    migration_script TEXT
+);
+```
+
+This self-documenting approach ensures:
+1. Single source of truth for data structure
+2. Automatic synchronization of documentation and data
+3. Queryable metadata for analysis
+4. Standardized concept mapping
+5. Enforced data quality rules
+
 ## System Architecture
 
 ```mermaid

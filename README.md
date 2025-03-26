@@ -344,6 +344,642 @@ INSERT INTO responses (
     (1, 8, 'Three times daily', 2);
 ```
 
+## Validation Rules and Constraints
+
+QuestSQL implements multiple layers of validation to ensure data quality and integrity:
+
+### 1. Database Constraints
+
+```sql
+-- Primary and Foreign Key Constraints
+ALTER TABLE questions
+    ADD CONSTRAINT fk_questionnaire
+    FOREIGN KEY (questionnaire_id)
+    REFERENCES questionnaires(questionnaire_id)
+    ON DELETE CASCADE;
+
+ALTER TABLE question_options
+    ADD CONSTRAINT fk_question
+    FOREIGN KEY (question_id)
+    REFERENCES questions(question_id)
+    ON DELETE CASCADE;
+
+-- Unique Constraints
+ALTER TABLE concepts
+    ADD CONSTRAINT unique_concept_code
+    UNIQUE (code);
+
+-- Check Constraints for Question Types
+ALTER TABLE questions
+    ADD CONSTRAINT valid_question_type
+    CHECK (question_type IN (
+        'true_false',
+        'multiple_choice',
+        'select_all',
+        'grid',
+        'grid_row',
+        'loop',
+        'text',
+        'number',
+        'date'
+    ));
+
+-- Check Constraints for Response Values
+ALTER TABLE responses
+    ADD CONSTRAINT valid_true_false_response
+    CHECK (
+        (SELECT question_type FROM questions WHERE question_id = responses.question_id) != 'true_false'
+        OR response_value IN ('true', 'false')
+    );
+
+ALTER TABLE responses
+    ADD CONSTRAINT valid_multiple_choice_response
+    CHECK (
+        (SELECT question_type FROM questions WHERE question_id = responses.question_id) != 'multiple_choice'
+        OR response_value IN (
+            SELECT option_value 
+            FROM question_options 
+            WHERE question_id = responses.question_id
+        )
+    );
+```
+
+### 2. Business Logic Validations
+
+```sql
+-- Function to validate select-all responses
+CREATE OR REPLACE FUNCTION validate_select_all_response(
+    p_question_id INTEGER,
+    p_response_value TEXT
+) RETURNS BOOLEAN AS $$
+BEGIN
+    -- Split response into array and validate each value
+    RETURN (
+        SELECT bool_and(option_value = ANY(string_to_array(p_response_value, ',')))
+        FROM question_options
+        WHERE question_id = p_question_id
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to validate grid responses
+CREATE OR REPLACE FUNCTION validate_grid_response(
+    p_question_id INTEGER,
+    p_response_value TEXT
+) RETURNS BOOLEAN AS $$
+BEGIN
+    -- Check if response is within grid column range
+    RETURN p_response_value IN (
+        SELECT column_value
+        FROM grid_columns
+        WHERE question_id = p_question_id
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to enforce loop question constraints
+CREATE OR REPLACE FUNCTION validate_loop_question()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Ensure loop_instance is not null for loop questions
+    IF EXISTS (
+        SELECT 1 FROM questions
+        WHERE question_id = NEW.question_id
+        AND question_type = 'loop'
+    ) AND NEW.loop_instance IS NULL THEN
+        RAISE EXCEPTION 'Loop instance required for loop questions';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER enforce_loop_question
+    BEFORE INSERT OR UPDATE ON responses
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_loop_question();
+```
+
+### 3. Data Quality Rules
+
+```sql
+-- View to identify missing required responses
+CREATE VIEW missing_required_responses AS
+SELECT 
+    q.questionnaire_id,
+    q.question_id,
+    q.question_text,
+    q.is_required
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+WHERE q.is_required = true
+AND r.response_id IS NULL;
+
+-- View to identify invalid responses by question type
+CREATE VIEW invalid_responses AS
+SELECT 
+    r.response_id,
+    q.question_id,
+    q.question_text,
+    q.question_type,
+    r.response_value
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+WHERE 
+    (q.question_type = 'true_false' AND r.response_value NOT IN ('true', 'false'))
+    OR (q.question_type = 'multiple_choice' AND r.response_value NOT IN (
+        SELECT option_value FROM question_options WHERE question_id = q.question_id
+    ))
+    OR (q.question_type = 'select_all' AND NOT validate_select_all_response(q.question_id, r.response_value))
+    OR (q.question_type = 'grid' AND NOT validate_grid_response(q.question_id, r.response_value));
+```
+
+### 4. Skip Logic Validation
+
+```sql
+-- Function to validate skip logic conditions
+CREATE OR REPLACE FUNCTION validate_skip_logic(
+    p_question_id INTEGER,
+    p_response_value TEXT
+) RETURNS TABLE (
+    target_question_id INTEGER,
+    should_skip BOOLEAN
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        sl.target_question_id,
+        CASE 
+            WHEN sl.condition_type = 'equals' THEN p_response_value = sl.condition_value
+            WHEN sl.condition_type = 'not_equals' THEN p_response_value != sl.condition_value
+            WHEN sl.condition_type = 'greater_than' THEN p_response_value::numeric > sl.condition_value::numeric
+            WHEN sl.condition_type = 'less_than' THEN p_response_value::numeric < sl.condition_value::numeric
+            ELSE false
+        END as should_skip
+    FROM skip_logic sl
+    WHERE sl.question_id = p_question_id;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+These validation rules ensure:
+1. Data integrity through foreign key constraints
+2. Valid question types and response values
+3. Proper handling of loop questions
+4. Required field validation
+5. Skip logic consistency
+6. Data quality monitoring through views
+
+## Validation in Practice
+
+Here's how to use QuestSQL's validation system in real-world scenarios:
+
+### 1. Validating Questionnaire Completion
+
+```sql
+-- Check if a questionnaire is complete
+WITH required_questions AS (
+    SELECT 
+        q.question_id,
+        q.question_text,
+        COUNT(r.response_id) as response_count
+    FROM questions q
+    LEFT JOIN responses r ON q.question_id = r.question_id
+    WHERE q.is_required = true
+    AND q.questionnaire_id = 1
+    GROUP BY q.question_id, q.question_text
+)
+SELECT 
+    CASE 
+        WHEN bool_and(response_count > 0) THEN 'Complete'
+        ELSE 'Incomplete'
+    END as completion_status,
+    COUNT(*) as total_required_questions,
+    SUM(response_count) as answered_questions
+FROM required_questions;
+```
+
+### 2. Data Quality Monitoring
+
+```sql
+-- Monitor data quality for a specific questionnaire
+SELECT 
+    q.question_type,
+    COUNT(*) as total_questions,
+    COUNT(r.response_id) as total_responses,
+    COUNT(CASE WHEN r.response_id IS NULL AND q.is_required THEN 1 END) as missing_required,
+    COUNT(CASE WHEN r.response_id IS NOT NULL THEN 1 END) as valid_responses
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+WHERE q.questionnaire_id = 1
+GROUP BY q.question_type;
+
+-- Check for invalid responses
+SELECT 
+    q.question_text,
+    q.question_type,
+    r.response_value,
+    CASE 
+        WHEN q.question_type = 'true_false' AND r.response_value NOT IN ('true', 'false') THEN 'Invalid boolean'
+        WHEN q.question_type = 'multiple_choice' AND r.response_value NOT IN (
+            SELECT option_value FROM question_options WHERE question_id = q.question_id
+        ) THEN 'Invalid option'
+        WHEN q.question_type = 'select_all' AND NOT validate_select_all_response(q.question_id, r.response_value) 
+        THEN 'Invalid selection'
+        WHEN q.question_type = 'grid' AND NOT validate_grid_response(q.question_id, r.response_value) 
+        THEN 'Invalid grid value'
+    END as validation_error
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+WHERE q.questionnaire_id = 1
+AND (
+    (q.question_type = 'true_false' AND r.response_value NOT IN ('true', 'false'))
+    OR (q.question_type = 'multiple_choice' AND r.response_value NOT IN (
+        SELECT option_value FROM question_options WHERE question_id = q.question_id
+    ))
+    OR (q.question_type = 'select_all' AND NOT validate_select_all_response(q.question_id, r.response_value))
+    OR (q.question_type = 'grid' AND NOT validate_grid_response(q.question_id, r.response_value))
+);
+```
+
+### 3. Skip Logic Implementation
+
+```sql
+-- Function to determine next question based on skip logic
+CREATE OR REPLACE FUNCTION get_next_question(
+    p_questionnaire_id INTEGER,
+    p_current_question_id INTEGER,
+    p_response_value TEXT
+) RETURNS INTEGER AS $$
+DECLARE
+    v_next_question_id INTEGER;
+BEGIN
+    -- Check skip logic
+    SELECT target_question_id INTO v_next_question_id
+    FROM validate_skip_logic(p_current_question_id, p_response_value)
+    WHERE should_skip = true
+    LIMIT 1;
+
+    -- If no skip logic applies, get next question in order
+    IF v_next_question_id IS NULL THEN
+        SELECT question_id INTO v_next_question_id
+        FROM questions
+        WHERE questionnaire_id = p_questionnaire_id
+        AND display_order > (
+            SELECT display_order 
+            FROM questions 
+            WHERE question_id = p_current_question_id
+        )
+        ORDER BY display_order
+        LIMIT 1;
+    END IF;
+
+    RETURN v_next_question_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Example usage in a survey flow
+WITH question_flow AS (
+    SELECT 
+        q.question_id,
+        q.question_text,
+        r.response_value,
+        get_next_question(1, q.question_id, r.response_value) as next_question_id
+    FROM questions q
+    LEFT JOIN responses r ON q.question_id = r.question_id
+    WHERE q.questionnaire_id = 1
+    ORDER BY q.display_order
+)
+SELECT 
+    question_text,
+    response_value,
+    (SELECT question_text FROM questions WHERE question_id = next_question_id) as next_question
+FROM question_flow;
+```
+
+### 4. Loop Question Validation
+
+```sql
+-- Validate loop question completeness
+WITH loop_instances AS (
+    SELECT DISTINCT loop_instance
+    FROM responses
+    WHERE question_id IN (
+        SELECT question_id 
+        FROM questions 
+        WHERE loop_question_id IS NOT NULL
+    )
+    AND questionnaire_id = 1
+)
+SELECT 
+    q.question_text,
+    li.loop_instance,
+    COUNT(r.response_id) as answered_questions,
+    COUNT(DISTINCT q.question_id) as required_questions,
+    CASE 
+        WHEN COUNT(r.response_id) = COUNT(DISTINCT q.question_id) THEN 'Complete'
+        ELSE 'Incomplete'
+    END as instance_status
+FROM loop_instances li
+CROSS JOIN questions q
+LEFT JOIN responses r ON q.question_id = r.question_id 
+    AND r.loop_instance = li.loop_instance
+WHERE q.loop_question_id IS NOT NULL
+AND q.questionnaire_id = 1
+GROUP BY q.question_text, li.loop_instance
+ORDER BY li.loop_instance;
+```
+
+### 5. Response Validation Before Insert
+
+```sql
+-- Function to validate and insert a response
+CREATE OR REPLACE FUNCTION insert_validated_response(
+    p_questionnaire_id INTEGER,
+    p_question_id INTEGER,
+    p_response_value TEXT,
+    p_loop_instance INTEGER DEFAULT NULL
+) RETURNS INTEGER AS $$
+DECLARE
+    v_question_type TEXT;
+    v_is_valid BOOLEAN;
+BEGIN
+    -- Get question type
+    SELECT question_type INTO v_question_type
+    FROM questions
+    WHERE question_id = p_question_id;
+
+    -- Validate response based on question type
+    v_is_valid := CASE
+        WHEN v_question_type = 'true_false' THEN 
+            p_response_value IN ('true', 'false')
+        WHEN v_question_type = 'multiple_choice' THEN
+            p_response_value IN (
+                SELECT option_value 
+                FROM question_options 
+                WHERE question_id = p_question_id
+            )
+        WHEN v_question_type = 'select_all' THEN
+            validate_select_all_response(p_question_id, p_response_value)
+        WHEN v_question_type = 'grid' THEN
+            validate_grid_response(p_question_id, p_response_value)
+        ELSE true
+    END;
+
+    -- Insert response if valid
+    IF v_is_valid THEN
+        INSERT INTO responses (
+            questionnaire_id,
+            question_id,
+            response_value,
+            loop_instance
+        ) VALUES (
+            p_questionnaire_id,
+            p_question_id,
+            p_response_value,
+            p_loop_instance
+        ) RETURNING response_id;
+    ELSE
+        RAISE EXCEPTION 'Invalid response value for question type %', v_question_type;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Example usage
+SELECT insert_validated_response(1, 1, 'true', NULL);
+SELECT insert_validated_response(1, 2, '2', NULL);
+SELECT insert_validated_response(1, 3, 'headache,nausea', NULL);
+```
+
+These examples demonstrate how to:
+1. Monitor questionnaire completion
+2. Track data quality
+3. Implement skip logic
+4. Validate loop questions
+5. Safely insert validated responses
+
+## Simplified Core Implementation
+
+QuestSQL can be implemented with a simpler approach, focusing on core features first. Here's how to build the essential functionality:
+
+### 1. Core Schema
+
+```sql
+-- Simplified schema focusing on essential features
+CREATE TABLE questionnaires (
+    questionnaire_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    version TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE questions (
+    question_id INTEGER PRIMARY KEY,
+    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+    question_text TEXT NOT NULL,
+    question_type TEXT NOT NULL CHECK (question_type IN ('true_false', 'multiple_choice', 'text')),
+    is_required BOOLEAN DEFAULT false,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE question_options (
+    option_id INTEGER PRIMARY KEY,
+    question_id INTEGER REFERENCES questions(question_id),
+    option_text TEXT NOT NULL,
+    option_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE responses (
+    response_id INTEGER PRIMARY KEY,
+    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+    question_id INTEGER REFERENCES questions(question_id),
+    response_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 2. Basic Question Types
+
+```sql
+-- Create a simple questionnaire
+INSERT INTO questionnaires (title, description) 
+VALUES ('Basic Health Survey', 'A simple health questionnaire');
+
+-- Add a true/false question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    is_required,
+    display_order
+) VALUES (
+    1,
+    'Have you experienced chest pain in the last 24 hours?',
+    'true_false',
+    true,
+    1
+);
+
+-- Add a multiple choice question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    is_required,
+    display_order
+) VALUES (
+    1,
+    'What is your current pain level?',
+    'multiple_choice',
+    true,
+    2
+);
+
+-- Add options for the multiple choice question
+INSERT INTO question_options (
+    question_id,
+    option_text,
+    option_value,
+    display_order
+) VALUES 
+    (2, 'No pain', '0', 1),
+    (2, 'Mild pain', '1', 2),
+    (2, 'Moderate pain', '2', 3),
+    (2, 'Severe pain', '3', 4);
+
+-- Add a text question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    is_required,
+    display_order
+) VALUES (
+    1,
+    'Please describe any other symptoms you are experiencing.',
+    'text',
+    false,
+    3
+);
+```
+
+### 3. Simple Response Collection
+
+```sql
+-- Function to insert a response with basic validation
+CREATE OR REPLACE FUNCTION insert_response(
+    p_questionnaire_id INTEGER,
+    p_question_id INTEGER,
+    p_response_value TEXT
+) RETURNS INTEGER AS $$
+DECLARE
+    v_question_type TEXT;
+BEGIN
+    -- Get question type
+    SELECT question_type INTO v_question_type
+    FROM questions
+    WHERE question_id = p_question_id;
+
+    -- Basic validation
+    IF v_question_type = 'true_false' AND p_response_value NOT IN ('true', 'false') THEN
+        RAISE EXCEPTION 'Invalid response for true/false question';
+    END IF;
+
+    IF v_question_type = 'multiple_choice' AND p_response_value NOT IN (
+        SELECT option_value 
+        FROM question_options 
+        WHERE question_id = p_question_id
+    ) THEN
+        RAISE EXCEPTION 'Invalid response for multiple choice question';
+    END IF;
+
+    -- Insert response
+    RETURN (
+        INSERT INTO responses (
+            questionnaire_id,
+            question_id,
+            response_value
+        ) VALUES (
+            p_questionnaire_id,
+            p_question_id,
+            p_response_value
+        ) RETURNING response_id
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Example usage
+SELECT insert_response(1, 1, 'true');
+SELECT insert_response(1, 2, '2');
+SELECT insert_response(1, 3, 'Feeling tired and have a headache');
+```
+
+### 4. Basic Analysis
+
+```sql
+-- Get questionnaire completion status
+SELECT 
+    q.question_text,
+    q.is_required,
+    CASE 
+        WHEN r.response_id IS NOT NULL THEN 'Answered'
+        ELSE 'Not answered'
+    END as status
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+WHERE q.questionnaire_id = 1
+ORDER BY q.display_order;
+
+-- Get response distribution for multiple choice questions
+SELECT 
+    q.question_text,
+    qo.option_text,
+    COUNT(r.response_id) as response_count
+FROM questions q
+JOIN question_options qo ON q.question_id = qo.question_id
+LEFT JOIN responses r ON q.question_id = r.question_id 
+    AND r.response_value = qo.option_value
+WHERE q.questionnaire_id = 1
+AND q.question_type = 'multiple_choice'
+GROUP BY q.question_text, qo.option_text, qo.display_order
+ORDER BY qo.display_order;
+```
+
+### 5. Simple Export
+
+```sql
+-- Export questionnaire responses to CSV format
+SELECT 
+    q.question_text,
+    CASE 
+        WHEN q.question_type = 'true_false' THEN r.response_value
+        WHEN q.question_type = 'multiple_choice' THEN qo.option_text
+        ELSE r.response_value
+    END as response
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+LEFT JOIN question_options qo ON q.question_id = qo.question_id 
+    AND r.response_value = qo.option_value
+WHERE q.questionnaire_id = 1
+ORDER BY q.display_order;
+```
+
+This simplified implementation:
+1. Focuses on three core question types (true/false, multiple choice, text)
+2. Uses basic database constraints for validation
+3. Provides simple response collection and analysis
+4. Maintains data integrity without complex business rules
+5. Is easy to understand and extend
+
+Additional features can be added as needed:
+- Grid questions using JSON storage
+- Skip logic through application logic
+- Loop questions with a simple parent-child relationship
+- More complex validation rules
+
 ## Features
 
 - **Questionnaire Development**

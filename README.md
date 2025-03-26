@@ -11,6 +11,7 @@ A SQL-first questionnaire development and administration system that unifies que
   - [Adding Grid Questions](#3-adding-grid-questions)
   - [Adding Loop Questions](#4-adding-loop-questions)
 - [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
+- [ID Management and Uniqueness](#id-management-and-uniqueness)
 - [Self-Documenting Data Model](#self-documenting-data-model)
 - [Implementation Examples](#implementation-examples)
 - [Validation and Constraints](#validation-and-constraints)
@@ -597,6 +598,141 @@ These examples demonstrate how QuestSQL's DDL can handle various types of health
 - Display order management
 - Integration with the core questions table
 - Support for conditional logic where needed
+
+## ID Management and Uniqueness
+
+QuestSQL uses a combination of database constraints and sequences to ensure unique IDs across all tables. Here's how we manage IDs:
+
+### 1. Global ID Sequence
+```sql
+-- Create a global sequence for all IDs
+CREATE SEQUENCE global_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+-- Function to get next ID
+CREATE OR REPLACE FUNCTION get_next_id()
+RETURNS INTEGER AS $$
+BEGIN
+    RETURN nextval('global_id_seq');
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### 2. ID Constraints
+```sql
+-- Questions table with unique ID
+CREATE TABLE questions (
+    question_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    questionnaire_id INTEGER NOT NULL,
+    question_text TEXT NOT NULL,
+    question_type TEXT NOT NULL,
+    is_required BOOLEAN DEFAULT false,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure unique question IDs within a questionnaire
+    UNIQUE(questionnaire_id, question_id)
+);
+
+-- Responses table with unique ID
+CREATE TABLE responses (
+    response_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    questionnaire_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    response_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure unique responses for a question
+    UNIQUE(questionnaire_id, question_id, response_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+-- Concepts table with unique ID
+CREATE TABLE concepts (
+    concept_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    concept_type TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 3. Composite Keys for Related Tables
+```sql
+-- Question options with composite key
+CREATE TABLE question_options (
+    question_id INTEGER NOT NULL,
+    option_id INTEGER NOT NULL,
+    option_text TEXT NOT NULL,
+    option_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, option_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+-- Grid questions with composite keys
+CREATE TABLE grid_rows (
+    question_id INTEGER NOT NULL,
+    row_id INTEGER NOT NULL,
+    row_text TEXT NOT NULL,
+    row_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, row_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+CREATE TABLE grid_columns (
+    question_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    column_text TEXT NOT NULL,
+    column_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, column_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+```
+
+### 4. Response Validation with Unique Constraints
+```sql
+-- Multiple choice responses with unique selection
+CREATE TABLE multiple_choice_responses (
+    response_id INTEGER PRIMARY KEY,
+    question_id INTEGER NOT NULL,
+    option_id INTEGER NOT NULL,
+    is_selected BOOLEAN DEFAULT false,
+    other_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure one selection per option per response
+    UNIQUE(response_id, option_id),
+    FOREIGN KEY (response_id) REFERENCES responses(response_id),
+    FOREIGN KEY (question_id, option_id) REFERENCES question_options(question_id, option_id)
+);
+
+-- Grid responses with unique cell value
+CREATE TABLE grid_responses (
+    response_id INTEGER PRIMARY KEY,
+    question_id INTEGER NOT NULL,
+    row_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    cell_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure one value per cell
+    UNIQUE(response_id, row_id, column_id),
+    FOREIGN KEY (response_id) REFERENCES responses(response_id),
+    FOREIGN KEY (question_id, row_id) REFERENCES grid_rows(question_id, row_id),
+    FOREIGN KEY (question_id, column_id) REFERENCES grid_columns(question_id, column_id)
+);
+```
+
+This ID management approach ensures:
+1. Global uniqueness through the sequence
+2. Referential integrity through foreign keys
+3. Business rule enforcement through unique constraints
+4. Efficient querying through proper indexing
+5. Data consistency across related tables
 
 ## Self-Documenting Data Model
 

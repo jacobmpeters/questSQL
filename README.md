@@ -32,6 +32,61 @@ QuestSQL aims to revolutionize how health questionnaires are developed, administ
 - Extensible API for community contributions
 - SDKs for R, Python, and other languages
 
+## End-to-End Pipeline
+
+```mermaid
+graph LR
+    subgraph Development
+        DDL[SQL DDL Statements]
+        API[REST API Layer]
+        SDK[Language SDKs]
+        MD[Markdown Interface]
+    end
+
+    subgraph Data Storage
+        SQLite[(SQLite Database)]
+    end
+
+    subgraph Analytics
+        DuckDB[(DuckDB Analytics)]
+        R[R Interface]
+        Python[Python Interface]
+        API2[Analytics API]
+    end
+
+    DDL --> SQLite
+    API --> SQLite
+    SDK --> SQLite
+    MD --> DDL
+
+    SQLite --> DuckDB
+    DuckDB --> R
+    DuckDB --> Python
+    DuckDB --> API2
+
+    style DDL fill:#f9f,stroke:#333,stroke-width:2px
+    style SQLite fill:#bbf,stroke:#333,stroke-width:2px
+    style DuckDB fill:#bfb,stroke:#333,stroke-width:2px
+```
+
+The pipeline shows how QuestSQL integrates different components:
+
+1. **Development Layer**
+   - SQL DDL statements as the primary development tool
+   - Optional REST API for DDL operations
+   - Language SDKs for simplified interaction
+   - Markdown interface for human-readable questionnaire definition
+
+2. **Data Storage**
+   - SQLite database as the core storage
+   - Stores both questionnaire structure and responses
+   - Enables offline-first operation
+
+3. **Analytics Layer**
+   - DuckDB as the core analytics engine
+   - Direct interfaces for R and Python
+   - REST API for external analysis tools
+
 ## Core Principles
 
 1. **Simplicity First**
@@ -799,6 +854,14 @@ CREATE TABLE responses (
     response_value TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- New table for select-all responses
+CREATE TABLE select_all_responses (
+    response_id INTEGER PRIMARY KEY,
+    question_id INTEGER REFERENCES questions(question_id),
+    option_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ### 2. Basic Question Types
@@ -911,10 +974,42 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Function to insert select-all responses
+CREATE OR REPLACE FUNCTION insert_select_all_responses(
+    p_question_id INTEGER,
+    p_selected_options TEXT[]
+) RETURNS INTEGER AS $$
+DECLARE
+    v_option TEXT;
+BEGIN
+    -- Validate all options
+    FOREACH v_option IN ARRAY p_selected_options
+    LOOP
+        IF v_option NOT IN (
+            SELECT option_value 
+            FROM question_options 
+            WHERE question_id = p_question_id
+        ) THEN
+            RAISE EXCEPTION 'Invalid option: %', v_option;
+        END IF;
+    END LOOP;
+
+    -- Insert each selected option
+    FOREACH v_option IN ARRAY p_selected_options
+    LOOP
+        INSERT INTO select_all_responses (question_id, option_value)
+        VALUES (p_question_id, v_option);
+    END LOOP;
+
+    RETURN 1;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Example usage
 SELECT insert_response(1, 1, 'true');
 SELECT insert_response(1, 2, '2');
-SELECT insert_response(1, 3, 'Feeling tired and have a headache');
+SELECT insert_select_all_responses(3, ARRAY['headache', 'nausea']);
+SELECT insert_response(1, 4, 'Feeling tired and have a headache');
 ```
 
 ### 4. Basic Analysis
@@ -957,6 +1052,12 @@ SELECT
     CASE 
         WHEN q.question_type = 'true_false' THEN r.response_value
         WHEN q.question_type = 'multiple_choice' THEN qo.option_text
+        WHEN q.question_type = 'select_all' THEN (
+            SELECT string_agg(qo2.option_text, ', ')
+            FROM select_all_responses sar
+            JOIN question_options qo2 ON sar.option_value = qo2.option_value
+            WHERE sar.question_id = q.question_id
+        )
         ELSE r.response_value
     END as response
 FROM questions q
@@ -966,50 +1067,3 @@ LEFT JOIN question_options qo ON q.question_id = qo.question_id
 WHERE q.questionnaire_id = 1
 ORDER BY q.display_order;
 ```
-
-This simplified implementation:
-1. Focuses on three core question types (true/false, multiple choice, text)
-2. Uses basic database constraints for validation
-3. Provides simple response collection and analysis
-4. Maintains data integrity without complex business rules
-5. Is easy to understand and extend
-
-Additional features can be added as needed:
-- Grid questions using JSON storage
-- Skip logic through application logic
-- Loop questions with a simple parent-child relationship
-- More complex validation rules
-
-## Features
-
-- **Questionnaire Development**
-  - SQL-based questionnaire definition
-  - Support for all common question types
-  - Skip logic and conditional questions
-  - Loop questions for repeating sections
-  - Grid questions
-  - Standardized concept mapping
-
-- **Survey Administration**
-  - SQLite-based client UI
-  - Real-time response collection
-  - Offline capability
-  - Data validation
-
-- **Analysis**
-  - DuckDB-powered analytics
-  - Support for arbitrary questionnaires
-  - Extensible analysis toolkit
-  - Multiple language SDKs
-
-## Getting Started
-
-[Coming soon]
-
-## Contributing
-
-[Coming soon]
-
-## License
-
-[Coming soon] 

@@ -43,7 +43,7 @@ graph LR
         MD[Markdown Interface]
     end
 
-    subgraph Data Storage
+    subgraph SQL Backend
         SQLite[(SQLite Database)]
     end
 
@@ -51,18 +51,16 @@ graph LR
         DuckDB[(DuckDB Analytics)]
         R[R Interface]
         Python[Python Interface]
-        API2[Analytics API]
     end
 
-    DDL --> SQLite
+    DDL <--> SQLite
     API --> DDL
     SDK --> API
     MD --> API
 
-    SQLite --> DuckDB
-    DuckDB --> R
-    DuckDB --> Python
-    DuckDB --> API2
+    SQLite <--> DuckDB
+    DuckDB <--> R
+    DuckDB <--> Python
 
     style DDL fill:#f9f,stroke:#333,stroke-width:2px
     style SQLite fill:#bbf,stroke:#333,stroke-width:2px
@@ -76,6 +74,16 @@ The pipeline shows how QuestSQL integrates different components:
    - REST API as the central interface layer, using DDL for database operations
    - Language SDKs and Markdown interface connect through the API
    - All database operations go through the DDL layer
+
+2. **SQL Backend**
+   - SQLite database as the core storage
+   - Direct interaction with DDL Library
+   - Bidirectional data flow with analytics
+
+3. **Analytics Layer**
+   - DuckDB as the core analytics engine
+   - Direct interfaces for R and Python
+   - Bidirectional data flow with SQLite
 
 ## Progressive Implementation
 

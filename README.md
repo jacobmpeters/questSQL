@@ -5,13 +5,15 @@ A SQL-first questionnaire development and administration system that unifies que
 ## Table of Contents
 - [Vision](#vision)
 - [System Architecture](#system-architecture)
+- [Core Data Model](#core-data-model)
 - [Progressive Implementation](#progressive-implementation)
   - [Basic Model](#1-basic-model)
   - [Adding Select-All Questions](#2-adding-select-all-questions)
   - [Adding Grid Questions](#3-adding-grid-questions)
   - [Adding Loop Questions](#4-adding-loop-questions)
-- [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
 - [ID Management and Uniqueness](#id-management-and-uniqueness)
+- [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
+- [Complete Questionnaire Example](#complete-questionnaire-example)
 - [Self-Documenting Data Model](#self-documenting-data-model)
 - [Implementation Examples](#implementation-examples)
 - [Validation and Constraints](#validation-and-constraints)
@@ -103,7 +105,93 @@ The pipeline shows how QuestSQL integrates different components:
    - Direct interfaces for R and Python
    - Bidirectional data flow with SQLite
 
+## Core Data Model
+
+The foundation of QuestSQL is its core data model, which consists of four essential tables:
+
+```mermaid
+erDiagram
+    questionnaires ||--o{ questions : contains
+    questions ||--o{ responses : receives
+    questions ||--o{ question_options : has
+    questions ||--o{ grid_rows : contains
+    questions ||--o{ grid_columns : contains
+    questions ||--o{ concepts : references
+
+    questionnaires {
+        integer questionnaire_id PK
+        text title
+        text description
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    questions {
+        integer question_id PK
+        integer questionnaire_id FK
+        text question_text
+        text question_type
+        boolean is_required
+        integer display_order
+        timestamp created_at
+    }
+
+    responses {
+        integer response_id PK
+        integer questionnaire_id FK
+        integer question_id FK
+        text response_value
+        timestamp created_at
+    }
+
+    question_options {
+        integer question_id FK
+        integer option_id PK
+        text option_text
+        text option_value
+        integer display_order
+    }
+
+    grid_rows {
+        integer question_id FK
+        integer row_id PK
+        text row_text
+        text row_value
+        integer display_order
+    }
+
+    grid_columns {
+        integer question_id FK
+        integer column_id PK
+        text column_text
+        text column_value
+        integer display_order
+    }
+
+    concepts {
+        integer concept_id PK
+        text code
+        text name
+        text description
+        text concept_type
+        timestamp created_at
+    }
+```
+
+This core model supports:
+1. Basic questionnaire structure
+2. Multiple question types
+3. Response collection
+4. Grid-based questions
+5. Standardized medical concepts
+
 ## Progressive Implementation
+
+QuestSQL is built incrementally, starting with a basic model and progressively adding more complex features. This approach allows for:
+- Early testing of core functionality
+- Gradual feature addition
+- Continuous validation
+- Clear development path
 
 ### 1. Basic Model
 
@@ -436,6 +524,141 @@ ALTER TABLE questions
     ));
 ```
 
+## ID Management and Uniqueness
+
+QuestSQL uses a combination of database constraints and sequences to ensure unique IDs across all tables. Here's how we manage IDs:
+
+### 1. Global ID Sequence
+```sql
+-- Create a global sequence for all IDs
+CREATE SEQUENCE global_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+-- Function to get next ID
+CREATE OR REPLACE FUNCTION get_next_id()
+RETURNS INTEGER AS $$
+BEGIN
+    RETURN nextval('global_id_seq');
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### 2. ID Constraints
+```sql
+-- Questions table with unique ID
+CREATE TABLE questions (
+    question_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    questionnaire_id INTEGER NOT NULL,
+    question_text TEXT NOT NULL,
+    question_type TEXT NOT NULL,
+    is_required BOOLEAN DEFAULT false,
+    display_order INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure unique question IDs within a questionnaire
+    UNIQUE(questionnaire_id, question_id)
+);
+
+-- Responses table with unique ID
+CREATE TABLE responses (
+    response_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    questionnaire_id INTEGER NOT NULL,
+    question_id INTEGER NOT NULL,
+    response_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure unique responses for a question
+    UNIQUE(questionnaire_id, question_id, response_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+-- Concepts table with unique ID
+CREATE TABLE concepts (
+    concept_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    concept_type TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 3. Composite Keys for Related Tables
+```sql
+-- Question options with composite key
+CREATE TABLE question_options (
+    question_id INTEGER NOT NULL,
+    option_id INTEGER NOT NULL,
+    option_text TEXT NOT NULL,
+    option_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, option_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+-- Grid questions with composite keys
+CREATE TABLE grid_rows (
+    question_id INTEGER NOT NULL,
+    row_id INTEGER NOT NULL,
+    row_text TEXT NOT NULL,
+    row_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, row_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+
+CREATE TABLE grid_columns (
+    question_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    column_text TEXT NOT NULL,
+    column_value TEXT NOT NULL,
+    display_order INTEGER NOT NULL,
+    PRIMARY KEY (question_id, column_id),
+    FOREIGN KEY (question_id) REFERENCES questions(question_id)
+);
+```
+
+### 4. Response Validation with Unique Constraints
+```sql
+-- Multiple choice responses with unique selection
+CREATE TABLE multiple_choice_responses (
+    response_id INTEGER PRIMARY KEY,
+    question_id INTEGER NOT NULL,
+    option_id INTEGER NOT NULL,
+    is_selected BOOLEAN DEFAULT false,
+    other_text TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure one selection per option per response
+    UNIQUE(response_id, option_id),
+    FOREIGN KEY (response_id) REFERENCES responses(response_id),
+    FOREIGN KEY (question_id, option_id) REFERENCES question_options(question_id, option_id)
+);
+
+-- Grid responses with unique cell value
+CREATE TABLE grid_responses (
+    response_id INTEGER PRIMARY KEY,
+    question_id INTEGER NOT NULL,
+    row_id INTEGER NOT NULL,
+    column_id INTEGER NOT NULL,
+    cell_value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure one value per cell
+    UNIQUE(response_id, row_id, column_id),
+    FOREIGN KEY (response_id) REFERENCES responses(response_id),
+    FOREIGN KEY (question_id, row_id) REFERENCES grid_rows(question_id, row_id),
+    FOREIGN KEY (question_id, column_id) REFERENCES grid_columns(question_id, column_id)
+);
+```
+
+This ID management approach ensures:
+1. Global uniqueness through the sequence
+2. Referential integrity through foreign keys
+3. Business rule enforcement through unique constraints
+4. Efficient querying through proper indexing
+5. Data consistency across related tables
+
 ## Example Health Questionnaire DDL
 
 Here are examples of how to create common health questionnaire question types using QuestSQL's DDL:
@@ -599,140 +822,280 @@ These examples demonstrate how QuestSQL's DDL can handle various types of health
 - Integration with the core questions table
 - Support for conditional logic where needed
 
-## ID Management and Uniqueness
+## Complete Questionnaire Example
 
-QuestSQL uses a combination of database constraints and sequences to ensure unique IDs across all tables. Here's how we manage IDs:
+This section demonstrates how to create a complete 10-question health questionnaire using QuestSQL's DDL. We'll create a "Patient Health Assessment" questionnaire that includes various question types.
 
-### 1. Global ID Sequence
+### Setting Up ID Management
 ```sql
--- Create a global sequence for all IDs
-CREATE SEQUENCE global_id_seq
+-- First, ensure we have our ID sequence
+CREATE SEQUENCE IF NOT EXISTS questionnaire_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
     NO MAXVALUE
     CACHE 1;
 
--- Function to get next ID
-CREATE OR REPLACE FUNCTION get_next_id()
+-- Create a function to get the next questionnaire ID
+CREATE OR REPLACE FUNCTION get_next_questionnaire_id()
 RETURNS INTEGER AS $$
 BEGIN
-    RETURN nextval('global_id_seq');
+    RETURN nextval('questionnaire_id_seq');
 END;
 $$ LANGUAGE plpgsql;
 ```
 
-### 2. ID Constraints
+### Creating the Questionnaire
 ```sql
--- Questions table with unique ID
-CREATE TABLE questions (
-    question_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    questionnaire_id INTEGER NOT NULL,
-    question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL,
-    is_required BOOLEAN DEFAULT false,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique question IDs within a questionnaire
-    UNIQUE(questionnaire_id, question_id)
+-- Create the questionnaire with a unique ID
+INSERT INTO questionnaires (questionnaire_id, title, description)
+VALUES (
+    get_next_questionnaire_id(),
+    'Patient Health Assessment',
+    'A comprehensive health assessment questionnaire covering various aspects of patient health and well-being'
 );
 
--- Responses table with unique ID
-CREATE TABLE responses (
-    response_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    questionnaire_id INTEGER NOT NULL,
-    question_id INTEGER NOT NULL,
-    response_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique responses for a question
-    UNIQUE(questionnaire_id, question_id, response_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+-- Store the questionnaire ID for later use
+DO $$
+DECLARE
+    v_questionnaire_id INTEGER;
+BEGIN
+    -- Get the current questionnaire ID
+    SELECT questionnaire_id INTO v_questionnaire_id
+    FROM questionnaires
+    WHERE title = 'Patient Health Assessment'
+    ORDER BY created_at DESC
+    LIMIT 1;
 
--- Concepts table with unique ID
-CREATE TABLE concepts (
-    concept_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    concept_type TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+    -- Ensure we have a valid questionnaire ID
+    IF v_questionnaire_id IS NULL THEN
+        RAISE EXCEPTION 'Failed to create questionnaire';
+    END IF;
 ```
 
-### 3. Composite Keys for Related Tables
+### 1. Basic Information Questions
 ```sql
--- Question options with composite key
-CREATE TABLE question_options (
-    question_id INTEGER NOT NULL,
-    option_id INTEGER NOT NULL,
-    option_text TEXT NOT NULL,
-    option_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, option_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+    -- Question 1: Patient Name
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'What is your full name?', 'text', true, 1)
+    RETURNING question_id INTO v_question_id;
 
--- Grid questions with composite keys
-CREATE TABLE grid_rows (
-    question_id INTEGER NOT NULL,
-    row_id INTEGER NOT NULL,
-    row_text TEXT NOT NULL,
-    row_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, row_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+    -- Question 2: Date of Birth
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'What is your date of birth?', 'datetime', true, 2)
+    RETURNING question_id INTO v_question_id;
 
-CREATE TABLE grid_columns (
-    question_id INTEGER NOT NULL,
-    column_id INTEGER NOT NULL,
-    column_text TEXT NOT NULL,
-    column_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    PRIMARY KEY (question_id, column_id),
-    FOREIGN KEY (question_id) REFERENCES questions(question_id)
-);
+    -- Add datetime configuration with uniqueness check
+    INSERT INTO datetime_questions (question_id, date_format, allow_time, min_date)
+    VALUES (v_question_id, 'YYYY-MM-DD', false, date('1900-01-01'))
+    ON CONFLICT (question_id) DO UPDATE
+    SET date_format = EXCLUDED.date_format,
+        allow_time = EXCLUDED.allow_time,
+        min_date = EXCLUDED.min_date;
 ```
 
-### 4. Response Validation with Unique Constraints
+### 2. Health Status Questions
 ```sql
--- Multiple choice responses with unique selection
-CREATE TABLE multiple_choice_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER NOT NULL,
-    option_id INTEGER NOT NULL,
-    is_selected BOOLEAN DEFAULT false,
-    other_text TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure one selection per option per response
-    UNIQUE(response_id, option_id),
-    FOREIGN KEY (response_id) REFERENCES responses(response_id),
-    FOREIGN KEY (question_id, option_id) REFERENCES question_options(question_id, option_id)
-);
+    -- Question 3: Overall Health Rating
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'How would you rate your overall health?', 'numeric_scale', true, 3)
+    RETURNING question_id INTO v_question_id;
 
--- Grid responses with unique cell value
-CREATE TABLE grid_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER NOT NULL,
-    row_id INTEGER NOT NULL,
-    column_id INTEGER NOT NULL,
-    cell_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure one value per cell
-    UNIQUE(response_id, row_id, column_id),
-    FOREIGN KEY (response_id) REFERENCES responses(response_id),
-    FOREIGN KEY (question_id, row_id) REFERENCES grid_rows(question_id, row_id),
-    FOREIGN KEY (question_id, column_id) REFERENCES grid_columns(question_id, column_id)
-);
+    -- Add numeric scale configuration with uniqueness check
+    INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
+    VALUES (v_question_id, 1, 5, 'Poor', 'Excellent')
+    ON CONFLICT (question_id) DO UPDATE
+    SET min_value = EXCLUDED.min_value,
+        max_value = EXCLUDED.max_value,
+        left_label = EXCLUDED.left_label,
+        right_label = EXCLUDED.right_label;
+
+    -- Question 4: Primary Health Concerns
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'What are your primary health concerns? (Select all that apply)', 'multiple_choice', true, 4)
+    RETURNING question_id INTO v_question_id;
+
+    -- Add multiple choice configuration with uniqueness check
+    INSERT INTO multiple_choice_questions (question_id, allow_other, max_selections)
+    VALUES (v_question_id, true, 5)
+    ON CONFLICT (question_id) DO UPDATE
+    SET allow_other = EXCLUDED.allow_other,
+        max_selections = EXCLUDED.max_selections;
+
+    -- Add options with uniqueness check
+    INSERT INTO question_options (question_id, option_text, option_value, display_order)
+    VALUES 
+        (v_question_id, 'Chronic Pain', 'chronic_pain', 1),
+        (v_question_id, 'Anxiety/Depression', 'anxiety_depression', 2),
+        (v_question_id, 'Sleep Issues', 'sleep_issues', 3),
+        (v_question_id, 'Digestive Problems', 'digestive_problems', 4),
+        (v_question_id, 'Other (please specify)', 'other', 5)
+    ON CONFLICT (question_id, option_value) DO UPDATE
+    SET option_text = EXCLUDED.option_text,
+        display_order = EXCLUDED.display_order;
 ```
 
-This ID management approach ensures:
-1. Global uniqueness through the sequence
-2. Referential integrity through foreign keys
-3. Business rule enforcement through unique constraints
-4. Efficient querying through proper indexing
-5. Data consistency across related tables
+### 3. Symptom Assessment
+```sql
+    -- Question 5: Symptom Severity Grid
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'Please rate the severity of your symptoms', 'grid', true, 5)
+    RETURNING question_id INTO v_question_id;
+
+    -- Add grid configuration with uniqueness check
+    INSERT INTO grid_questions (question_id, row_type, column_type)
+    VALUES (v_question_id, 'symptom', 'severity')
+    ON CONFLICT (question_id) DO UPDATE
+    SET row_type = EXCLUDED.row_type,
+        column_type = EXCLUDED.column_type;
+
+    -- Add symptoms as rows with uniqueness check
+    INSERT INTO grid_rows (question_id, row_text, row_value, display_order)
+    VALUES 
+        (v_question_id, 'Pain', 'pain', 1),
+        (v_question_id, 'Fatigue', 'fatigue', 2),
+        (v_question_id, 'Anxiety', 'anxiety', 3),
+        (v_question_id, 'Sleep Quality', 'sleep', 4)
+    ON CONFLICT (question_id, row_value) DO UPDATE
+    SET row_text = EXCLUDED.row_text,
+        display_order = EXCLUDED.display_order;
+
+    -- Add severity scale as columns with uniqueness check
+    INSERT INTO grid_columns (question_id, column_text, column_value, display_order)
+    VALUES 
+        (v_question_id, 'None', '0', 1),
+        (v_question_id, 'Mild', '1', 2),
+        (v_question_id, 'Moderate', '2', 3),
+        (v_question_id, 'Severe', '3', 4)
+    ON CONFLICT (question_id, column_value) DO UPDATE
+    SET column_text = EXCLUDED.column_text,
+        display_order = EXCLUDED.display_order;
+```
+
+### 4. Medication and Treatment
+```sql
+    -- Question 6: Current Medications
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'Are you currently taking any medications?', 'true_false', true, 6)
+    RETURNING question_id INTO v_question_id;
+
+    -- Question 7: Medication Details (Conditional)
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'Please list your current medications:', 'text', false, 7)
+    RETURNING question_id INTO v_question_id;
+
+    -- Add conditional logic with uniqueness check
+    INSERT INTO conditional_questions (question_id, parent_question_id, condition_type, condition_value)
+    VALUES (v_question_id, v_question_id - 1, 'equals', 'true')
+    ON CONFLICT (question_id) DO UPDATE
+    SET parent_question_id = EXCLUDED.parent_question_id,
+        condition_type = EXCLUDED.condition_type,
+        condition_value = EXCLUDED.condition_value;
+```
+
+### 5. Lifestyle and Habits
+```sql
+    -- Question 8: Exercise Frequency
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'How often do you exercise?', 'multiple_choice', true, 8)
+    RETURNING question_id INTO v_question_id;
+
+    -- Add options with uniqueness check
+    INSERT INTO question_options (question_id, option_text, option_value, display_order)
+    VALUES 
+        (v_question_id, 'Never', 'never', 1),
+        (v_question_id, '1-2 times per week', '1_2', 2),
+        (v_question_id, '3-4 times per week', '3_4', 3),
+        (v_question_id, '5 or more times per week', '5_plus', 4)
+    ON CONFLICT (question_id, option_value) DO UPDATE
+    SET option_text = EXCLUDED.option_text,
+        display_order = EXCLUDED.display_order;
+```
+
+### 6. Quality of Life
+```sql
+    -- Question 9: Quality of Life Impact
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'How has your health condition affected your quality of life?', 'numeric_scale', true, 9)
+    RETURNING question_id INTO v_question_id;
+
+    -- Add numeric scale configuration with uniqueness check
+    INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
+    VALUES (v_question_id, 1, 10, 'Not at all', 'Significantly')
+    ON CONFLICT (question_id) DO UPDATE
+    SET min_value = EXCLUDED.min_value,
+        max_value = EXCLUDED.max_value,
+        left_label = EXCLUDED.left_label,
+        right_label = EXCLUDED.right_label;
+```
+
+### 7. Additional Information
+```sql
+    -- Question 10: Additional Notes
+    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+    VALUES (v_questionnaire_id, 'Is there anything else you would like to share about your health?', 'text', false, 10)
+    RETURNING question_id INTO v_question_id;
+
+END $$;
+```
+
+### Verifying Questionnaire Structure
+```sql
+-- Verify questionnaire creation
+SELECT 
+    q.questionnaire_id,
+    q.title,
+    COUNT(DISTINCT q.question_id) as total_questions,
+    COUNT(DISTINCT CASE WHEN q.is_required THEN q.question_id END) as required_questions
+FROM questionnaires q
+LEFT JOIN questions qs ON q.questionnaire_id = qs.questionnaire_id
+WHERE q.title = 'Patient Health Assessment'
+GROUP BY q.questionnaire_id, q.title;
+
+-- Get all questions with their types and configurations
+SELECT 
+    q.display_order,
+    q.question_text,
+    q.question_type,
+    q.is_required,
+    CASE 
+        WHEN q.question_type = 'numeric_scale' THEN 
+            (SELECT CONCAT(min_value, ' to ', max_value, ' (', left_label, ' to ', right_label, ')')
+             FROM numeric_scale_questions 
+             WHERE question_id = q.question_id)
+        WHEN q.question_type = 'multiple_choice' THEN 
+            (SELECT GROUP_CONCAT(option_text)
+             FROM question_options 
+             WHERE question_id = q.question_id)
+        WHEN q.question_type = 'grid' THEN 
+            (SELECT CONCAT('Grid with ', COUNT(DISTINCT r.row_text), ' rows and ', 
+                          COUNT(DISTINCT c.column_text), ' columns')
+             FROM grid_questions g
+             LEFT JOIN grid_rows r ON g.question_id = r.question_id
+             LEFT JOIN grid_columns c ON g.question_id = c.question_id
+             WHERE g.question_id = q.question_id)
+        ELSE NULL
+    END as configuration
+FROM questions q
+WHERE q.questionnaire_id = (SELECT questionnaire_id FROM questionnaires WHERE title = 'Patient Health Assessment')
+ORDER BY q.display_order;
+```
+
+This example demonstrates:
+1. Proper ID management using sequences
+2. Uniqueness constraints with ON CONFLICT clauses
+3. Transaction safety using DO blocks
+4. Variable scoping for ID tracking
+5. Verification queries for data integrity
+
+The resulting questionnaire includes:
+- Basic information (name, DOB)
+- Health status assessment
+- Symptom severity grid
+- Medication information
+- Lifestyle questions
+- Quality of life assessment
+- Open-ended feedback
 
 ## Self-Documenting Data Model
 
@@ -859,13 +1222,19 @@ This self-documenting approach ensures:
 
 ## Implementation Examples
 
-[Previous implementation examples remain the same, but organized by complexity level]
+This section demonstrates how to use QuestSQL's DDL to create and manage questionnaires:
+
+[Previous implementation examples section remains the same]
 
 ## Validation and Constraints
+
+QuestSQL enforces data quality through various constraints and validation rules:
 
 [Previous validation section remains the same]
 
 ## Analytics and Export
+
+QuestSQL provides powerful analytics capabilities through DuckDB integration:
 
 [Previous analytics section remains the same]
 

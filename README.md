@@ -10,6 +10,7 @@ A SQL-first questionnaire development and administration system that unifies que
   - [Adding Select-All Questions](#2-adding-select-all-questions)
   - [Adding Grid Questions](#3-adding-grid-questions)
   - [Adding Loop Questions](#4-adding-loop-questions)
+- [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
 - [Self-Documenting Data Model](#self-documenting-data-model)
 - [Implementation Examples](#implementation-examples)
 - [Validation and Constraints](#validation-and-constraints)
@@ -433,6 +434,169 @@ ALTER TABLE questions
         'text'
     ));
 ```
+
+## Example Health Questionnaire DDL
+
+Here are examples of how to create common health questionnaire question types using QuestSQL's DDL:
+
+### 1. Numeric Scale Questions
+```sql
+-- Create a numeric scale question (e.g., pain scale 0-10)
+CREATE TABLE numeric_scale_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    min_value INTEGER NOT NULL,
+    max_value INTEGER NOT NULL,
+    step_size INTEGER DEFAULT 1,
+    left_label TEXT,
+    right_label TEXT,
+    CONSTRAINT valid_scale CHECK (
+        min_value < max_value AND
+        step_size > 0 AND
+        (max_value - min_value) % step_size = 0
+    )
+);
+
+-- Example: Pain intensity scale
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'How would you rate your pain on a scale of 0 to 10?', 'numeric_scale', true, 1);
+
+INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
+VALUES (last_insert_rowid(), 0, 10, 'No pain', 'Worst pain possible');
+```
+
+### 2. Multiple Choice with "Other" Option
+```sql
+-- Create a multiple choice question with "Other" option
+CREATE TABLE multiple_choice_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    allow_other BOOLEAN DEFAULT false,
+    other_label TEXT DEFAULT 'Other (please specify)',
+    max_selections INTEGER DEFAULT 1,
+    CONSTRAINT valid_selections CHECK (max_selections > 0)
+);
+
+-- Example: Primary symptoms
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'Which symptoms are you experiencing? (Select all that apply)', 'multiple_choice', true, 2);
+
+INSERT INTO multiple_choice_questions (question_id, allow_other, max_selections)
+VALUES (last_insert_rowid(), true, 10);
+
+-- Add options
+INSERT INTO question_options (question_id, option_text, option_value, display_order)
+VALUES 
+    (last_insert_rowid(), 'Headache', 'headache', 1),
+    (last_insert_rowid(), 'Nausea', 'nausea', 2),
+    (last_insert_rowid(), 'Fatigue', 'fatigue', 3),
+    (last_insert_rowid(), 'Other (please specify)', 'other', 4);
+```
+
+### 3. Grid Questions for Related Items
+```sql
+-- Create a grid question (e.g., symptom severity matrix)
+CREATE TABLE grid_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    row_type TEXT NOT NULL,
+    column_type TEXT NOT NULL,
+    allow_skip BOOLEAN DEFAULT false
+);
+
+-- Example: Symptom severity and frequency grid
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'Please rate the severity and frequency of your symptoms', 'grid', true, 3);
+
+INSERT INTO grid_questions (question_id, row_type, column_type)
+VALUES (last_insert_rowid(), 'symptom', 'rating');
+
+-- Add rows (symptoms)
+INSERT INTO grid_rows (question_id, row_text, row_value, display_order)
+VALUES 
+    (last_insert_rowid(), 'Headache', 'headache', 1),
+    (last_insert_rowid(), 'Nausea', 'nausea', 2),
+    (last_insert_rowid(), 'Fatigue', 'fatigue', 3);
+
+-- Add columns (rating scale)
+INSERT INTO grid_columns (question_id, column_text, column_value, display_order)
+VALUES 
+    (last_insert_rowid(), 'None', '0', 1),
+    (last_insert_rowid(), 'Mild', '1', 2),
+    (last_insert_rowid(), 'Moderate', '2', 3),
+    (last_insert_rowid(), 'Severe', '3', 4);
+```
+
+### 4. Date/Time Questions
+```sql
+-- Create a date/time question
+CREATE TABLE datetime_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    date_format TEXT NOT NULL,
+    allow_time BOOLEAN DEFAULT false,
+    min_date DATE,
+    max_date DATE,
+    CONSTRAINT valid_date_format CHECK (
+        date_format IN ('YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY')
+    )
+);
+
+-- Example: Last medication taken
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'When did you last take your medication?', 'datetime', true, 4);
+
+INSERT INTO datetime_questions (question_id, date_format, allow_time, min_date)
+VALUES (last_insert_rowid(), 'YYYY-MM-DD', true, date('now', '-30 days'));
+```
+
+### 5. Conditional Questions
+```sql
+-- Create a conditional question
+CREATE TABLE conditional_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    parent_question_id INTEGER REFERENCES questions(question_id),
+    condition_type TEXT NOT NULL,
+    condition_value TEXT NOT NULL,
+    CONSTRAINT valid_condition CHECK (
+        condition_type IN ('equals', 'not_equals', 'greater_than', 'less_than')
+    )
+);
+
+-- Example: Follow-up question based on previous response
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'Have you experienced any side effects?', 'true_false', true, 5);
+
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'Please describe the side effects:', 'text', false, 6);
+
+INSERT INTO conditional_questions (question_id, parent_question_id, condition_type, condition_value)
+VALUES (last_insert_rowid(), last_insert_rowid() - 1, 'equals', 'true');
+```
+
+### 6. File Upload Questions
+```sql
+-- Create a file upload question
+CREATE TABLE file_upload_questions (
+    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
+    allowed_types TEXT[] NOT NULL,
+    max_size_mb INTEGER NOT NULL,
+    max_files INTEGER DEFAULT 1,
+    CONSTRAINT valid_file_config CHECK (
+        max_size_mb > 0 AND max_files > 0
+    )
+);
+
+-- Example: Upload medical records
+INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
+VALUES (1, 'Please upload any relevant medical records', 'file_upload', false, 7);
+
+INSERT INTO file_upload_questions (question_id, allowed_types, max_size_mb, max_files)
+VALUES (last_insert_rowid(), ARRAY['pdf', 'jpg', 'png'], 10, 3);
+```
+
+These examples demonstrate how QuestSQL's DDL can handle various types of health questionnaire questions while maintaining data integrity and validation. Each question type includes:
+- Appropriate constraints for data validation
+- Support for required/optional questions
+- Display order management
+- Integration with the core questions table
+- Support for conditional logic where needed
 
 ## Self-Documenting Data Model
 

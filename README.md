@@ -425,3 +425,412 @@ ALTER TABLE questions
 ## License
 
 [Coming soon]
+
+## Core Data Model
+
+The foundation of QuestSQL is its core data model, which consists of four essential tables:
+
+```mermaid
+erDiagram
+    questionnaires ||--o{ questions : contains
+    questions ||--o{ responses : receives
+    questions ||--o{ question_options : has
+    questions ||--o{ grid_rows : contains
+    questions ||--o{ grid_columns : contains
+    questions ||--o{ concepts : references
+    responses ||--o{ concepts : references
+
+    questionnaires {
+        integer questionnaire_id PK
+        text title
+        text description
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    questions {
+        integer question_id PK
+        integer questionnaire_id FK
+        text question_text
+        text question_type
+        boolean is_required
+        integer display_order
+        timestamp created_at
+        integer concept_id FK
+    }
+
+    responses {
+        integer response_id PK
+        integer questionnaire_id FK
+        integer question_id FK
+        text response_value
+        timestamp created_at
+        integer concept_id FK
+    }
+
+    question_options {
+        integer question_id FK
+        integer option_id PK
+        text option_text
+        text option_value
+        integer display_order
+        integer concept_id FK
+    }
+
+    grid_rows {
+        integer question_id FK
+        integer row_id PK
+        text row_text
+        text row_value
+        integer display_order
+        integer concept_id FK
+    }
+
+    grid_columns {
+        integer question_id FK
+        integer column_id PK
+        text column_text
+        text column_value
+        integer display_order
+        integer concept_id FK
+    }
+
+    concepts {
+        integer concept_id PK
+        text code
+        text name
+        text description
+        text concept_type
+        timestamp created_at
+    }
+```
+
+This core model supports:
+1. Basic questionnaire structure
+2. Multiple question types
+3. Response collection
+4. Grid-based questions
+5. Standardized medical concepts
+
+### Concept Mapping
+
+The model uses concept mapping similar to OMOP CDM:
+
+1. **Question Concepts**
+   - Each question can map to a standard clinical concept
+   - Example: A question about "Blood Pressure" maps to concept_id 3004249
+   - This enables standardized question interpretation
+
+2. **Response Concepts**
+   - Each response can map to a standard clinical value
+   - Example: A response of "High" to a blood pressure question maps to concept_id 4171373
+   - This enables standardized response interpretation
+
+3. **Option Concepts**
+   - Multiple choice options can map to standard values
+   - Example: "Yes" maps to concept_id 4188539
+   - This ensures consistent value representation
+
+4. **Grid Concepts**
+   - Grid rows and columns can map to standard concepts
+   - Example: A row for "Systolic" maps to concept_id 3004249
+   - This enables structured data collection
+
+### OMOP CDM Compatibility
+
+QuestSQL's concept mapping aligns directly with OMOP CDM's design principles:
+
+1. **Direct Mapping to OMOP**
+   - Questions map to OMOP Concepts (CONCEPT table)
+   - Responses map to OMOP Values (CONCEPT table)
+   - Grid elements map to OMOP Measurements (MEASUREMENT table)
+   - All mappings use standard OMOP concept IDs
+
+2. **Observation Structure**
+   - Questions become OMOP Observations
+   - Responses become OMOP Values
+   - Grid questions map to OMOP Measurements
+   - Maintains temporal relationships
+
+3. **Vocabulary Integration**
+   - Uses OMOP's standard vocabularies
+   - Supports SNOMED CT, LOINC, RxNorm, etc.
+   - Enables cross-vocabulary mapping
+   - Maintains concept hierarchies
+
+4. **Data Quality**
+   - Enforces standard concept usage
+   - Validates against OMOP vocabularies
+   - Maintains data consistency
+   - Supports quality checks
+
+### OMOP Mapping Support
+
+QuestSQL provides comprehensive support for mapping questionnaire elements to specific OMOP CDM domains and vocabularies:
+
+1. **Domain-Specific Mapping**
+   - **Condition/Disease Questions**
+     ```sql
+     -- Example: Diabetes screening question
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'Have you been diagnosed with diabetes?',
+         'multiple_choice',
+         201820,  -- Diabetes mellitus concept
+         'Condition'
+     );
+     ```
+
+   - **Measurement Questions**
+     ```sql
+     -- Example: Blood pressure measurement
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'What is your blood pressure?',
+         'grid',
+         3004249,  -- Blood pressure concept
+         'Measurement'
+     );
+     ```
+
+   - **Drug/Medication Questions**
+     ```sql
+     -- Example: Medication adherence
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'Are you taking your prescribed medications?',
+         'multiple_choice',
+         4023213,  -- Medication adherence concept
+         'Drug'
+     );
+     ```
+
+2. **Vocabulary-Specific Development**
+   - **SNOMED CT Questions**
+     ```sql
+     -- Example: Pain assessment using SNOMED
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         vocabulary_id
+     ) VALUES (
+         1,
+         'Rate your pain level',
+         'grid',
+         36714913,  -- Pain severity concept
+         'SNOMED'
+     );
+     ```
+
+   - **LOINC Questions**
+     ```sql
+     -- Example: Lab result questions
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         vocabulary_id
+     ) VALUES (
+         1,
+         'What was your last HbA1c result?',
+         'numeric',
+         3004410,  -- HbA1c concept
+         'LOINC'
+     );
+     ```
+
+   - **RxNorm Questions**
+     ```sql
+     -- Example: Medication questions
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         vocabulary_id
+     ) VALUES (
+         1,
+         'Are you taking metformin?',
+         'true_false',
+         1502809,  -- Metformin concept
+         'RxNorm'
+     );
+     ```
+
+3. **Cross-Domain Mapping**
+   ```sql
+   -- Example: Complex health assessment
+   INSERT INTO questions (
+       questionnaire_id,
+       question_text,
+       question_type,
+       concept_id,
+       domain_id,
+       parent_concept_id
+   ) VALUES (
+       1,
+       'Complete the following health assessment',
+       'grid',
+       42539022,  -- Health assessment concept
+       'Observation',
+       42539022   -- Parent concept for assessment
+   );
+
+   -- Add assessment components
+   INSERT INTO grid_rows (question_id, row_text, concept_id, domain_id) VALUES
+   (1, 'Blood Pressure', 3004249, 'Measurement'),
+   (1, 'Diabetes Status', 201820, 'Condition'),
+   (1, 'Medication Adherence', 4023213, 'Drug');
+   ```
+
+4. **Temporal Mapping**
+   ```sql
+   -- Example: Longitudinal assessment
+   INSERT INTO questions (
+       questionnaire_id,
+       question_text,
+       question_type,
+       concept_id,
+       domain_id,
+       temporal_type
+   ) VALUES (
+       1,
+       'When did you first experience symptoms?',
+       'datetime',
+       44814650,  -- Symptom onset concept
+       'Observation',
+       'Event'
+   );
+   ```
+
+5. **Value Set Support**
+   ```sql
+   -- Example: Standardized response options
+   INSERT INTO question_options (
+       question_id,
+       option_text,
+       option_value,
+       concept_id,
+       value_set_id
+   ) VALUES 
+   (1, 'Never', 'never', 4135376, 'Frequency'),
+   (1, 'Sometimes', 'sometimes', 4135377, 'Frequency'),
+   (1, 'Often', 'often', 4135378, 'Frequency'),
+   (1, 'Always', 'always', 4135379, 'Frequency');
+   ```
+
+This mapping support enables:
+- Precise alignment with OMOP CDM domains
+- Standardized vocabulary usage
+- Consistent data representation
+- Seamless integration with clinical systems
+- Support for complex health assessments
+- Longitudinal data collection
+
+### Benefits of Concept Mapping
+
+The concept mapping approach provides several key advantages:
+
+1. **Clinical Standardization**
+   - Questions map to standard clinical concepts
+   - Responses use standard clinical values
+   - Enables consistent clinical interpretation
+   - Supports clinical decision support
+
+2. **Data Integration**
+   - Seamless integration with clinical systems
+   - Compatible with EHR data
+   - Supports research data warehouses
+   - Enables cross-system analysis
+
+3. **Semantic Interoperability**
+   - Standardized clinical terminology
+   - Consistent value representation
+   - Cross-vocabulary mapping
+   - Semantic search capabilities
+
+4. **Analytical Power**
+   - Standardized analysis across systems
+   - Support for clinical analytics
+   - Population health insights
+   - Research study integration
+
+5. **Quality Assurance**
+   - Built-in validation
+   - Standard concept checking
+   - Data consistency enforcement
+   - Quality metrics support
+
+6. **Future-Proofing**
+   - Adaptable to new vocabularies
+   - Support for emerging standards
+   - Extensible concept mapping
+   - Long-term maintainability
+
+### Example Usage
+
+```sql
+-- Create a blood pressure question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    concept_id
+) VALUES (
+    1,
+    'What is your blood pressure?',
+    'grid',
+    3004249  -- Blood Pressure concept
+);
+
+-- Create grid rows with concepts
+INSERT INTO grid_rows (question_id, row_text, row_value, concept_id) VALUES
+(1, 'Systolic', 'systolic', 3004249),  -- Blood Pressure
+(1, 'Diastolic', 'diastolic', 3004250); -- Diastolic Blood Pressure
+
+-- Create grid columns with concepts
+INSERT INTO grid_columns (question_id, column_text, column_value, concept_id) VALUES
+(1, 'High', 'high', 4171373),    -- High
+(1, 'Normal', 'normal', 4171374), -- Normal
+(1, 'Low', 'low', 4171375);       -- Low
+
+-- Record a response with concept mapping
+INSERT INTO responses (
+    questionnaire_id,
+    question_id,
+    response_value,
+    concept_id
+) VALUES (
+    1,
+    1,
+    'high',
+    4171373  -- High concept
+);
+```
+
+This approach provides several benefits:
+1. **Standardization**: All data points map to standard clinical concepts
+2. **Interoperability**: Easy integration with OMOP CDM and other clinical systems
+3. **Consistency**: Uniform representation of clinical concepts
+4. **Analysis**: Enables standardized analysis across different questionnaires

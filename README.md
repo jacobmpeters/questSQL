@@ -173,102 +173,113 @@ erDiagram
 - Temporal data tracking
 - Explicit vocabulary tracking (SNOMED, RxNorm, etc.)
 
-### Storage Approaches
+## Storage Approaches
 
-QuestSQL supports two approaches for storing structured data:
+QuestSQL could have chosen either a normalized or denormalized approach for storing structured data. While both approaches have their merits, QuestSQL implements a normalized approach for the following reasons:
 
-1. **Normalized Storage (Recommended)**
-   - Uses traditional relational tables with proper foreign key relationships
-   - Better for data integrity, querying, and maintaining relationships
-   - Example: Grid questions use separate tables for rows and columns
-   ```sql
-   CREATE TABLE grid_rows (
-       row_id INTEGER PRIMARY KEY,
-       grid_id INTEGER,
-       row_text TEXT,
-       order_index INTEGER,
-       FOREIGN KEY (grid_id) REFERENCES grid_questions(grid_id)
-   );
-   ```
-
-2. **Denormalized Storage (JSON)**
-   - Stores structured data as JSON in TEXT fields
-   - Simpler schema but less flexible for querying
-   - Example: Grid questions using JSON arrays
-   ```sql
-   CREATE TABLE grid_questions (
-       grid_id INTEGER PRIMARY KEY,
-       rows TEXT,  -- '["Headache", "Fatigue", "Nausea"]'
-       columns TEXT  -- '["Never", "Sometimes", "Often", "Always"]'
-   );
-   ```
-
-The normalized approach is recommended for most use cases as it provides better data integrity, querying capabilities, and maintainability. The denormalized approach may be suitable for highly flexible or temporary data structures.
-
-## Clinical Concept Mapping
-
-The `question_response_concept_mappings` table provides explicit mapping between questionnaire elements and clinical concepts:
-
+### Normalized Approach (QuestSQL's Choice)
+- Uses traditional relational tables with proper foreign key relationships
+- Better for data integrity, querying, and maintaining relationships
+- Example: Grid questions use separate tables for rows and columns
 ```sql
-CREATE TABLE question_response_concept_mappings (
-    mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- References to the mapped elements
-    question_id INTEGER,
-    response_id INTEGER,
-    -- The clinical concept this maps to
-    concept_id INTEGER NOT NULL,
-    -- The vocabulary this concept comes from (e.g., 'SNOMED', 'RxNorm')
-    vocabulary_id TEXT NOT NULL,
-    -- The OMOP domain this mapping belongs to
-    domain_id TEXT NOT NULL CHECK (
-        domain_id IN ('Condition', 'Measurement', 'Drug', 'Observation')
-    ),
-    -- When this mapping was created/updated
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure we have the right combination of IDs
-    CONSTRAINT valid_mapping CHECK (
-        (question_id IS NOT NULL AND response_id IS NULL) OR
-        (question_id IS NULL AND response_id IS NOT NULL) OR
-        (question_id IS NOT NULL AND response_id IS NOT NULL)
-    ),
-    -- Foreign key constraints
-    FOREIGN KEY (question_id) REFERENCES questions(question_id),
-    FOREIGN KEY (response_id) REFERENCES responses(response_id),
-    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id)
+CREATE TABLE grid_rows (
+    row_id INTEGER PRIMARY KEY,
+    grid_id INTEGER,
+    row_text TEXT,
+    order_index INTEGER,
+    FOREIGN KEY (grid_id) REFERENCES grid_questions(grid_id)
 );
-
--- Example mappings
-INSERT INTO question_response_concept_mappings (
-    question_id,
-    concept_id,
-    vocabulary_id,
-    domain_id
-) VALUES 
-    (1, 3004249, 'SNOMED', 'Measurement'),  -- Blood pressure question
-    (2, 3012888, 'SNOMED', 'Measurement');  -- Heart rate question
-
-INSERT INTO question_response_concept_mappings (
-    response_id,
-    concept_id,
-    vocabulary_id,
-    domain_id
-) VALUES 
-    (1, 4171373, 'SNOMED', 'Measurement'),  -- High blood pressure response
-    (2, 4171374, 'SNOMED', 'Measurement');  -- Normal blood pressure response
-
--- Map a specific question-response pair
-INSERT INTO question_response_concept_mappings (
-    question_id,
-    response_id,
-    concept_id,
-    vocabulary_id,
-    domain_id
-) VALUES 
-    (1, 1, 4171373, 'SNOMED', 'Measurement');  -- High blood pressure observation
 ```
 
-## Progressive Implementation
+### Denormalized Approach (Not Implemented)
+- Stores structured data as JSON in TEXT fields
+- Simpler schema but less flexible for querying
+- Example: Grid questions using JSON arrays
+```sql
+CREATE TABLE grid_questions (
+    grid_id INTEGER PRIMARY KEY,
+    rows TEXT,  -- '["Headache", "Fatigue", "Nausea"]'
+    columns TEXT  -- '["Never", "Sometimes", "Often", "Always"]'
+);
+```
+
+### Why QuestSQL Chooses Normalization
+
+1. **Data Integrity**
+   - Enforces referential integrity through foreign keys
+   - Prevents orphaned or invalid data
+   - Maintains data consistency across tables
+
+2. **Query Flexibility**
+   - Enables complex queries and joins
+   - Supports efficient filtering and aggregation
+   - Allows for better performance optimization
+
+3. **OMOP CDM Compatibility**
+   - Aligns with OMOP's normalized structure
+   - Makes mapping to OMOP concepts more straightforward
+   - Supports better integration with clinical systems
+
+4. **Maintainability**
+   - Easier to modify individual components
+   - Better support for data migrations
+   - Clearer data relationships
+
+## Data Dictionary View
+
+QuestSQL provides a comprehensive `data_dictionary` view that denormalizes all question metadata into a human-readable format. This view combines information from multiple tables into a single, queryable view that makes it easy to understand the structure and relationships of questionnaire data.
+
+The view includes:
+1. **Questionnaire Information**: Title, version, status, and description
+2. **Question Information**: Text, type, required flag, and order
+3. **Question Options**: For multiple choice questions, including text, value, and order
+4. **Grid Question Structure**: Grid type and structure (rows and columns)
+5. **Conditional Logic**: Parent question relationships and display rules
+6. **Validation Rules**: Rule type, value, and error message
+7. **Concept Mappings**: Both question and response concept mappings with vocabulary and domain information
+8. **Response Statistics**: Response count, first and last response dates
+9. **Metadata**: Creation and update timestamps
+
+Example queries using the data dictionary view:
+```sql
+-- Get all questions in a questionnaire
+SELECT * FROM data_dictionary WHERE questionnaire_id = 1;
+
+-- Get all grid questions
+SELECT * FROM data_dictionary WHERE question_type = 'grid';
+
+-- Get questions with specific concept mappings
+SELECT * FROM data_dictionary WHERE question_concept_mappings LIKE '%3004249%';
+
+-- Get questions with validation rules
+SELECT * FROM data_dictionary WHERE validation_rules IS NOT NULL;
+
+-- Get questions with conditional logic
+SELECT * FROM data_dictionary WHERE conditional_logic IS NOT NULL;
+```
+
+The data dictionary view is implemented in `views/01_data_dictionary.sql` and provides a convenient way to explore and analyze questionnaire metadata while maintaining the benefits of the normalized database structure.
+
+## Architecture
+
+```mermaid
+graph TD
+    A[Questionnaire] --> B[Questions]
+    B --> C[Responses]
+    B --> D[Options]
+    B --> E[Grid Questions]
+    E --> F[Grid Rows]
+    E --> G[Grid Columns]
+    E --> H[Grid Responses]
+    B --> I[Conditional Questions]
+    B --> J[Validation Rules]
+    B --> K[Concept Mappings]
+    C --> K
+    D --> K
+    H --> K
+```
+
+## Model Levels
 
 QuestSQL is designed to be implemented progressively, starting with basic functionality and adding features as needed. All schema files are located in the `models/` directory:
 

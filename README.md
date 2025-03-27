@@ -250,135 +250,40 @@ INSERT INTO clinical_concept_mappings (
 
 ## Progressive Implementation
 
-QuestSQL is built incrementally, with each level adding new capabilities:
+QuestSQL is designed to be implemented progressively, starting with basic functionality and adding features as needed. All schema files are located in the `models/` directory:
 
-### 1. Basic Model
-The foundation supports core question types and basic concept mapping:
+1. **Basic Model** (`models/01_basic_model.sql`)
+   - Core questionnaire structure
+   - Basic question types
+   - Simple concept mapping
+   - The foundation supports core question types and basic concept mapping.
 
-```sql
--- Basic question types
-CREATE TABLE questions (
-    question_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
-    question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL CHECK (
-        question_type IN ('true_false', 'multiple_choice', 'text')
-    ),
-    is_required BOOLEAN DEFAULT false,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+2. **Question-Response Pair Mapping** (`models/02_pair_mapping.sql`)
+   - Enhanced concept mapping
+   - Response standardization
+   - Adds support for mapping complete clinical observations.
 
--- Basic concept mapping
-CREATE TABLE clinical_concept_mappings (
-    mapping_id INTEGER PRIMARY KEY,
-    mapped_type TEXT NOT NULL CHECK (mapped_type IN ('question', 'response')),
-    question_id INTEGER REFERENCES questions(question_id),
-    response_id INTEGER REFERENCES responses(response_id),
-    concept_id INTEGER NOT NULL,
-    vocabulary_id TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+3. **Advanced Question Types** (`models/03_advanced_types.sql`)
+   - Grid questions
+   - Conditional logic
+   - Complex validation
+   - Adds support for complex question types with pair mapping.
 
-### 2. Question-Response Pair Mapping
-Adds support for mapping complete clinical observations:
+4. **OMOP Integration** (`models/04_omop_integration.sql`)
+   - OMOP CDM mapping
+   - Observation periods
+   - Visit context
+   - Adds comprehensive OMOP CDM mapping support.
 
-```sql
--- Question-response pair mapping
-CREATE TABLE question_response_concept_mappings (
-    mapping_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    response_id INTEGER REFERENCES responses(response_id),
-    concept_id INTEGER NOT NULL,
-    vocabulary_id TEXT NOT NULL,
-    domain_id TEXT NOT NULL CHECK (
-        domain_id IN ('Condition', 'Measurement', 'Drug', 'Observation')
-    ),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure we have both question and response
-    CONSTRAINT valid_pair CHECK (
-        question_id IS NOT NULL AND response_id IS NOT NULL
-    )
-);
+5. **Full-Featured Model** (`models/05_full_featured_model.sql`)
+   - Complete implementation combining all features
+   - All question types with concept mapping
+   - Comprehensive validation and constraints
+   - Full OMOP CDM integration
+   - Performance optimizations and views
+   - This is the recommended schema for production use.
 
--- Example: Blood pressure observation
-INSERT INTO question_response_concept_mappings (
-    question_id,
-    response_id,
-    concept_id,
-    vocabulary_id,
-    domain_id
-) VALUES (
-    1,  -- Blood pressure question
-    1,  -- High blood pressure response
-    4171373,  -- High blood pressure concept
-    'SNOMED',
-    'Measurement'
-);
-```
-
-### 3. Advanced Question Types
-Adds support for complex question types with pair mapping:
-
-```sql
--- Grid questions with pair mapping
-CREATE TABLE grid_columns (
-    column_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    column_text TEXT NOT NULL,
-    column_value TEXT NOT NULL,
-    concept_id INTEGER NOT NULL,
-    vocabulary_id TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Example: Blood pressure grid
-INSERT INTO grid_columns (
-    question_id,
-    column_text,
-    column_value,
-    concept_id,
-    vocabulary_id
-) VALUES 
-(1, 'Systolic', 'systolic', 3004249, 'SNOMED'),
-(1, 'Diastolic', 'diastolic', 3004249, 'SNOMED');
-
--- Map grid responses to observations
-INSERT INTO question_response_concept_mappings (
-    question_id,
-    response_id,
-    concept_id,
-    vocabulary_id,
-    domain_id
-) VALUES 
-(1, 1, 4171373, 'SNOMED', 'Measurement'),  -- High systolic
-(1, 2, 4171374, 'SNOMED', 'Measurement');  -- Normal diastolic
-```
-
-### 4. OMOP Integration
-Adds comprehensive OMOP CDM mapping support:
-
-```sql
--- OMOP observation mapping
-CREATE VIEW omop_observations AS
-SELECT 
-    p.person_id,
-    m.concept_id as observation_concept_id,
-    r.created_at as observation_date,
-    r.response_value as value_as_string,
-    m2.concept_id as value_as_concept_id,
-    m.domain_id,
-    m.vocabulary_id
-FROM question_response_concept_mappings m
-JOIN responses r ON m.response_id = r.response_id
-JOIN questions q ON m.question_id = q.question_id
-JOIN persons p ON r.person_id = p.person_id
-LEFT JOIN clinical_concept_mappings m2 ON r.response_id = m2.response_id
-WHERE m2.mapped_type = 'response';
-```
+Each level builds upon the previous one, allowing for gradual implementation while maintaining compatibility with the OMOP CDM. The schema files in the `models/` directory provide the complete SQL for each implementation level.
 
 ## OMOP Integration
 

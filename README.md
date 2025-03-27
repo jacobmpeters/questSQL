@@ -1,54 +1,51 @@
 # QuestSQL
 
-A SQL-first questionnaire development and administration system that unifies questionnaire design, data collection, and analysis through a single, well-structured data model. By making the data model itself self-documenting, QuestSQL eliminates the need for separate data dictionaries and ensures documentation is always in sync with the data.
+A SQL-first questionnaire development and administration system that unifies questionnaire design, data collection, and analysis through a single, well-structured data model. Built with OMOP CDM compatibility in mind, it enables seamless integration with clinical data systems.
 
 ## Table of Contents
-- [Vision](#vision)
-- [System Architecture](#system-architecture)
-- [Core Data Model](#core-data-model)
-- [Progressive Implementation](#progressive-implementation)
-  - [Basic Model](#1-basic-model)
-  - [Question Types](#2-question-types)
-  - [Response Validation](#3-response-validation)
-  - [Grid-based Questions](#4-grid-based-questions)
-  - [Standardized Medical Concepts](#5-standardized-medical-concepts)
-- [Example Health Questionnaire DDL](#example-health-questionnaire-ddl)
-- [Complete Questionnaire Example](#complete-questionnaire-example)
-- [OMOP Vocabulary Mapping](#omop-vocabulary-mapping)
-- [Self-Documenting Data Model](#self-documenting-data-model)
-- [ID Management and Uniqueness](#id-management-and-uniqueness)
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Core Data Model](#core-data-model)
+4. [Clinical Concept Mapping](#clinical-concept-mapping)
+5. [Progressive Implementation](#progressive-implementation)
+6. [OMOP Integration](#omop-integration)
+7. [Examples](#examples)
+8. [Validation and Constraints](#validation-and-constraints)
+9. [Analytics and Export](#analytics-and-export)
 
-## Vision
+## Overview
 
-QuestSQL aims to revolutionize how health questionnaires are developed, administered, and analyzed by making SQL the foundation of everything. This approach provides several key benefits:
+QuestSQL provides a unified approach to health questionnaire development and administration:
 
-### SQL-First Design
-- All questionnaire logic and relationships are encoded directly in SQL
-- Questionnaire development happens through SQL DDL statements
-- Enables multiple layers of abstraction:
-  - REST APIs for DDL operations
-  - SDKs for simplified interaction
-  - Human-readable markdown language for questionnaire authoring
+- **SQL-First Design**: All questionnaire logic encoded directly in SQL
+- **Concept Mapping**: Enforced mapping to clinical concepts during questionnaire development
+- **OMOP Compatible**: Direct mapping to clinical concepts and vocabularies
+- **Self-Documenting**: Schema serves as the data dictionary
+- **Analytics Ready**: Built-in support for clinical data analysis
 
-### Unified Data Model
-- Single source of truth for questionnaire structure and data
-- Eliminates the need for separate data dictionaries
-- Enforces data quality and consistency through database constraints
-- Supports both questionnaire development and data collection
+### Key Principles
 
-### Client-Side Administration
-- Lightweight SQLite-based UI for survey administration
-- Direct interaction with the data model
-- Real-time response collection and storage
-- No complex middleware required
+1. **Development-Time Mapping**
+   - Questions must map to standard clinical concepts during creation
+   - Response options must map to standard clinical values
+   - Question-response pairs must form valid clinical observations
+   - All mappings are enforced through database constraints
 
-### Analytics Toolkit
-- DuckDB-powered analysis capabilities
-- Support for arbitrary questionnaire analysis
-- Extensible API for community contributions
-- SDKs for R, Python, and other languages
+2. **Vocabulary Standardization**
+   - Uses standard clinical vocabularies (SNOMED, LOINC, RxNorm)
+   - Maintains explicit vocabulary source tracking
+   - Enables cross-vocabulary mapping
+   - Supports OMOP CDM compatibility
 
-## System Architecture
+3. **Data Quality**
+   - Enforces standard concept usage
+   - Validates against clinical vocabularies
+   - Maintains data consistency
+   - Supports quality checks
+
+## Architecture
+
+The system is built around three core components:
 
 ```mermaid
 graph LR
@@ -56,7 +53,6 @@ graph LR
         DDL[SQL DDL Library]
         API[REST API Layer]
         SDK[Language SDKs]
-        MD[Markdown Interface]
     end
 
     subgraph SQL Backend
@@ -72,7 +68,6 @@ graph LR
     DDL <--> SQLite
     API --> DDL
     SDK --> API
-    MD --> API
 
     SQLite <--> DuckDB
     DuckDB <--> R
@@ -83,43 +78,43 @@ graph LR
     style DuckDB fill:#bfb,stroke:#333,stroke-width:2px
 ```
 
-The pipeline shows how QuestSQL integrates different components:
-
+### Key Components
 1. **Development Layer**
-   - SQL DDL Library as the primary development tool
-   - REST API as the central interface layer, using DDL for database operations
-   - Language SDKs and Markdown interface connect through the API
-   - All database operations go through the DDL layer
+   - SQL DDL Library for schema management
+   - REST API for remote operations
+   - SDKs for language-specific integration
 
 2. **SQL Backend**
-   - SQLite database as the core storage
-   - Direct interaction with DDL Library
-   - Bidirectional data flow with analytics
+   - SQLite for local data storage
+   - Direct DDL interaction
+   - Real-time data collection
 
 3. **Analytics Layer**
-   - DuckDB as the core analytics engine
-   - Direct interfaces for R and Python
-   - Bidirectional data flow with SQLite
+   - DuckDB for high-performance analysis
+   - R and Python interfaces
+   - Extensible analytics toolkit
 
 ## Core Data Model
 
-The foundation of QuestSQL is its core data model, which consists of four essential tables:
+The foundation of QuestSQL is its concept-mapped data model, with question-response pairs as the fundamental mappable unit:
 
 ```mermaid
 erDiagram
     questionnaires ||--o{ questions : contains
     questions ||--o{ responses : receives
     questions ||--o{ question_options : has
-    questions ||--o{ grid_rows : contains
-    questions ||--o{ grid_columns : contains
-    questions ||--o{ concepts : references
+    questions ||--o{ clinical_concept_mappings : "maps to"
+    responses ||--o{ clinical_concept_mappings : "maps to"
+    clinical_concept_mappings ||--o{ concepts : "references"
+    questions ||--o{ question_response_concept_mappings : "forms"
+    responses ||--o{ question_response_concept_mappings : "forms"
+    question_response_concept_mappings ||--o{ concepts : "maps to"
 
     questionnaires {
         integer questionnaire_id PK
         text title
         text description
         timestamp created_at
-        timestamp updated_at
     }
 
     questions {
@@ -141,27 +136,33 @@ erDiagram
     }
 
     question_options {
-        integer question_id FK
         integer option_id PK
+        integer question_id FK
         text option_text
         text option_value
         integer display_order
     }
 
-    grid_rows {
+    clinical_concept_mappings {
+        integer mapping_id PK
+        text mapped_type
         integer question_id FK
-        integer row_id PK
-        text row_text
-        text row_value
-        integer display_order
+        integer response_id FK
+        integer concept_id FK
+        text vocabulary_id
+        timestamp created_at
+        timestamp updated_at
     }
 
-    grid_columns {
+    question_response_concept_mappings {
+        integer mapping_id PK
         integer question_id FK
-        integer column_id PK
-        text column_text
-        text column_value
-        integer display_order
+        integer response_id FK
+        integer concept_id FK
+        text vocabulary_id
+        text domain_id
+        timestamp created_at
+        timestamp updated_at
     }
 
     concepts {
@@ -174,1066 +175,969 @@ erDiagram
     }
 ```
 
-This core model supports:
-1. Basic questionnaire structure
-2. Multiple question types
-3. Response collection
-4. Grid-based questions
-5. Standardized medical concepts
+### Key Features
+- Question-response pairs are the fundamental mappable unit
+- Each pair maps to a complete clinical observation
+- Questions map to standard clinical concepts (e.g., "Blood Pressure" maps to concept_id 3004249)
+- Responses map to standard clinical values (e.g., "High" maps to concept_id 4171373)
+- Question-response pairs map to complete clinical observations (e.g., "High Blood Pressure" maps to concept_id 4171373)
+- Question options map to standard values (e.g., "Yes" maps to concept_id 4188539)
+- Built-in support for multiple question types
+- Standardized value sets through concept mapping
+- Temporal data tracking
+- Explicit vocabulary tracking (SNOMED, RxNorm, etc.)
+
+## Clinical Concept Mapping
+
+The `clinical_concept_mappings` table provides explicit mapping between questionnaire elements and clinical concepts:
+
+```sql
+CREATE TABLE clinical_concept_mappings (
+    mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- What is being mapped (question, response, or question-response pair)
+    mapped_type TEXT NOT NULL CHECK (mapped_type IN ('question', 'response', 'pair')),
+    -- References to the mapped elements
+    question_id INTEGER,
+    response_id INTEGER,
+    -- The clinical concept this maps to
+    concept_id INTEGER NOT NULL,
+    -- The vocabulary this concept comes from (e.g., 'SNOMED', 'RxNorm')
+    vocabulary_id TEXT NOT NULL,
+    -- When this mapping was created/updated
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure we have the right combination of IDs based on mapped_type
+    CONSTRAINT valid_mapping CHECK (
+        (mapped_type = 'question' AND question_id IS NOT NULL AND response_id IS NULL) OR
+        (mapped_type = 'response' AND response_id IS NOT NULL AND question_id IS NULL) OR
+        (mapped_type = 'pair' AND question_id IS NOT NULL AND response_id IS NOT NULL)
+    ),
+    -- Foreign key constraints
+    FOREIGN KEY (question_id) REFERENCES questions(question_id),
+    FOREIGN KEY (response_id) REFERENCES responses(response_id),
+    FOREIGN KEY (concept_id) REFERENCES concepts(concept_id)
+);
+
+-- Example mappings
+INSERT INTO clinical_concept_mappings (
+    mapped_type,
+    question_id,
+    concept_id,
+    vocabulary_id
+) VALUES 
+    ('question', 1, 3004249, 'SNOMED'),  -- Blood pressure question
+    ('question', 2, 3012888, 'SNOMED');  -- Heart rate question
+
+INSERT INTO clinical_concept_mappings (
+    mapped_type,
+    response_id,
+    concept_id,
+    vocabulary_id
+) VALUES 
+    ('response', 1, 4171373, 'SNOMED'),  -- High blood pressure response
+    ('response', 2, 4171374, 'SNOMED');  -- Normal blood pressure response
+
+-- Map a specific question-response pair
+INSERT INTO clinical_concept_mappings (
+    mapped_type,
+    question_id,
+    response_id,
+    concept_id,
+    vocabulary_id
+) VALUES 
+    ('pair', 1, 1, 4171373, 'SNOMED');  -- High blood pressure observation
+```
 
 ## Progressive Implementation
 
-QuestSQL is built incrementally, starting with a basic model and progressively adding more complex features. This approach allows for:
-- Early testing of core functionality
-- Gradual feature addition
-- Continuous validation
-- Clear development path
+QuestSQL is built incrementally, with each level adding new capabilities:
 
 ### 1. Basic Model
+The foundation supports core question types and basic concept mapping:
 
-The simplest implementation supports three core question types: true/false, multiple choice, and text.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Basic Schema
 ```sql
-CREATE TABLE questionnaires (
-    questionnaire_id INTEGER PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
+-- Basic question types
 CREATE TABLE questions (
     question_id INTEGER PRIMARY KEY,
     questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
     question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL CHECK (question_type IN ('true_false', 'multiple_choice', 'text')),
+    question_type TEXT NOT NULL CHECK (
+        question_type IN ('true_false', 'multiple_choice', 'text')
+    ),
     is_required BOOLEAN DEFAULT false,
     display_order INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE question_options (
-    option_id INTEGER PRIMARY KEY,
+-- Basic concept mapping
+CREATE TABLE clinical_concept_mappings (
+    mapping_id INTEGER PRIMARY KEY,
+    mapped_type TEXT NOT NULL CHECK (mapped_type IN ('question', 'response')),
     question_id INTEGER REFERENCES questions(question_id),
-    option_text TEXT NOT NULL,
-    option_value TEXT NOT NULL,
-    display_order INTEGER NOT NULL,
+    response_id INTEGER REFERENCES responses(response_id),
+    concept_id INTEGER NOT NULL,
+    vocabulary_id TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+```
 
-CREATE TABLE responses (
-    response_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
+### 2. Question-Response Pair Mapping
+Adds support for mapping complete clinical observations:
+
+```sql
+-- Question-response pair mapping
+CREATE TABLE question_response_concept_mappings (
+    mapping_id INTEGER PRIMARY KEY,
     question_id INTEGER REFERENCES questions(question_id),
-    response_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    response_id INTEGER REFERENCES responses(response_id),
+    concept_id INTEGER NOT NULL,
+    vocabulary_id TEXT NOT NULL,
+    domain_id TEXT NOT NULL CHECK (
+        domain_id IN ('Condition', 'Measurement', 'Drug', 'Observation')
+    ),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- Ensure we have both question and response
+    CONSTRAINT valid_pair CHECK (
+        question_id IS NOT NULL AND response_id IS NOT NULL
+    )
+);
+
+-- Example: Blood pressure observation
+INSERT INTO question_response_concept_mappings (
+    question_id,
+    response_id,
+    concept_id,
+    vocabulary_id,
+    domain_id
+) VALUES (
+    1,  -- Blood pressure question
+    1,  -- High blood pressure response
+    4171373,  -- High blood pressure concept
+    'SNOMED',
+    'Measurement'
 );
 ```
 
-### 2. Question Types
+### 3. Advanced Question Types
+Adds support for complex question types with pair mapping:
 
-The next level adds support for additional question types.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
 ```sql
--- Add select-all responses table
-CREATE TABLE select_all_responses (
-    response_id INTEGER PRIMARY KEY,
-    question_id INTEGER REFERENCES questions(question_id),
-    option_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Update question type constraint
-ALTER TABLE questions
-    DROP CONSTRAINT valid_question_type;
-
-ALTER TABLE questions
-    ADD CONSTRAINT valid_question_type
-    CHECK (question_type IN (
-        'true_false',
-        'multiple_choice',
-        'select_all',
-        'text'
-    ));
-```
-
-### 3. Response Validation
-
-The next level adds support for response validation.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-    response_types {
-        int response_type_id PK
-        string response_type
-        jsonb validation_rules
-        text description
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ response_types : "response_type"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
-```sql
--- Add response types table
-CREATE TABLE response_types (
-    response_type_id INTEGER PRIMARY KEY,
-    response_type TEXT NOT NULL UNIQUE,
-    validation_rules JSONB NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Link questions to response types
-ALTER TABLE questions
-    ADD COLUMN response_type_id INTEGER REFERENCES response_types(response_type_id);
-```
-
-### 4. Grid-based Questions
-
-The next level adds support for grid questions with rows and columns.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        int parent_question_id FK
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    grid_columns {
-        int column_id PK
-        int question_id FK
-        string column_text
-        string column_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ questions : "parent_question_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ grid_columns : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-```
-
-#### Extended Schema
-```sql
--- Add grid columns table
+-- Grid questions with pair mapping
 CREATE TABLE grid_columns (
     column_id INTEGER PRIMARY KEY,
     question_id INTEGER REFERENCES questions(question_id),
     column_text TEXT NOT NULL,
     column_value TEXT NOT NULL,
+    concept_id INTEGER NOT NULL,
+    vocabulary_id TEXT NOT NULL,
     display_order INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Update question type constraint
-ALTER TABLE questions
-    DROP CONSTRAINT valid_question_type;
+-- Example: Blood pressure grid
+INSERT INTO grid_columns (
+    question_id,
+    column_text,
+    column_value,
+    concept_id,
+    vocabulary_id
+) VALUES 
+(1, 'Systolic', 'systolic', 3004249, 'SNOMED'),
+(1, 'Diastolic', 'diastolic', 3004249, 'SNOMED');
 
-ALTER TABLE questions
-    ADD CONSTRAINT valid_question_type
-    CHECK (question_type IN (
-        'true_false',
-        'multiple_choice',
-        'select_all',
-        'grid',
-        'grid_row',
-        'text'
-    ));
+-- Map grid responses to observations
+INSERT INTO question_response_concept_mappings (
+    question_id,
+    response_id,
+    concept_id,
+    vocabulary_id,
+    domain_id
+) VALUES 
+(1, 1, 4171373, 'SNOMED', 'Measurement'),  -- High systolic
+(1, 2, 4171374, 'SNOMED', 'Measurement');  -- Normal diastolic
 ```
 
-### 5. Standardized Medical Concepts
+### 4. OMOP Integration
+Adds comprehensive OMOP CDM mapping support:
 
-The final level adds support for standardized medical concepts.
-
-```mermaid
-erDiagram
-    questionnaires {
-        int questionnaire_id PK
-        string title
-        string description
-        datetime created_at
-    }
-    questions {
-        int question_id PK
-        int questionnaire_id FK
-        string question_text
-        string question_type
-        boolean is_required
-        int display_order
-        int parent_question_id FK
-        int loop_question_id FK
-        int loop_position
-        datetime created_at
-    }
-    question_options {
-        int option_id PK
-        int question_id FK
-        string option_text
-        string option_value
-        int display_order
-        datetime created_at
-    }
-    grid_columns {
-        int column_id PK
-        int question_id FK
-        string column_text
-        string column_value
-        int display_order
-        datetime created_at
-    }
-    responses {
-        int response_id PK
-        int questionnaire_id FK
-        int question_id FK
-        string response_value
-        int loop_instance
-        datetime created_at
-    }
-    select_all_responses {
-        int response_id PK
-        int question_id FK
-        string option_value
-        datetime created_at
-    }
-    concepts {
-        int concept_id PK
-        string code
-        string name
-        string description
-        string concept_type
-        datetime created_at
-    }
-
-    questionnaires ||--o{ questions : "questionnaire_id"
-    questions ||--o{ questions : "parent_question_id"
-    questions ||--o{ questions : "loop_question_id"
-    questions ||--o{ question_options : "question_id"
-    questions ||--o{ grid_columns : "question_id"
-    questions ||--o{ responses : "question_id"
-    questions ||--o{ select_all_responses : "question_id"
-    questionnaires ||--o{ responses : "questionnaire_id"
-    concepts ||--o{ questions : "concept_id"
-```
-
-#### Extended Schema
 ```sql
--- Add concepts table
-CREATE TABLE concepts (
-    concept_id INTEGER PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    concept_type TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Link questions to concepts
-ALTER TABLE questions
-    ADD COLUMN concept_id INTEGER REFERENCES concepts(concept_id);
-```
-
-## Example Health Questionnaire DDL
-
-Here are examples of how to create common health questionnaire question types using QuestSQL's DDL:
-
-### 1. Numeric Scale Questions
-```sql
--- Create a numeric scale question (e.g., pain scale 0-10)
-CREATE TABLE numeric_scale_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    min_value INTEGER NOT NULL,
-    max_value INTEGER NOT NULL,
-    step_size INTEGER DEFAULT 1,
-    left_label TEXT,
-    right_label TEXT,
-    CONSTRAINT valid_scale CHECK (
-        min_value < max_value AND
-        step_size > 0 AND
-        (max_value - min_value) % step_size = 0
-    )
-);
-
--- Example: Pain intensity scale
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'How would you rate your pain on a scale of 0 to 10?', 'numeric_scale', true, 1);
-
-INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
-VALUES (last_insert_rowid(), 0, 10, 'No pain', 'Worst pain possible');
-```
-
-### 2. Multiple Choice with "Other" Option
-```sql
--- Create a multiple choice question with "Other" option
-CREATE TABLE multiple_choice_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    allow_other BOOLEAN DEFAULT false,
-    other_label TEXT DEFAULT 'Other (please specify)',
-    max_selections INTEGER DEFAULT 1,
-    CONSTRAINT valid_selections CHECK (max_selections > 0)
-);
-
--- Example: Primary symptoms
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'Which symptoms are you experiencing? (Select all that apply)', 'multiple_choice', true, 2);
-
-INSERT INTO multiple_choice_questions (question_id, allow_other, max_selections)
-VALUES (last_insert_rowid(), true, 10);
-
--- Add options
-INSERT INTO question_options (question_id, option_text, option_value, display_order)
-VALUES 
-    (last_insert_rowid(), 'Headache', 'headache', 1),
-    (last_insert_rowid(), 'Nausea', 'nausea', 2),
-    (last_insert_rowid(), 'Fatigue', 'fatigue', 3),
-    (last_insert_rowid(), 'Other (please specify)', 'other', 4);
-```
-
-### 3. Grid Questions for Related Items
-```sql
--- Create a grid question (e.g., symptom severity matrix)
-CREATE TABLE grid_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    row_type TEXT NOT NULL,
-    column_type TEXT NOT NULL,
-    allow_skip BOOLEAN DEFAULT false
-);
-
--- Example: Symptom severity and frequency grid
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'Please rate the severity and frequency of your symptoms', 'grid', true, 3);
-
-INSERT INTO grid_questions (question_id, row_type, column_type)
-VALUES (last_insert_rowid(), 'symptom', 'rating');
-
--- Add rows (symptoms)
-INSERT INTO grid_rows (question_id, row_text, row_value, display_order)
-VALUES 
-    (last_insert_rowid(), 'Headache', 'headache', 1),
-    (last_insert_rowid(), 'Nausea', 'nausea', 2),
-    (last_insert_rowid(), 'Fatigue', 'fatigue', 3);
-
--- Add columns (rating scale)
-INSERT INTO grid_columns (question_id, column_text, column_value, display_order)
-VALUES 
-    (last_insert_rowid(), 'None', '0', 1),
-    (last_insert_rowid(), 'Mild', '1', 2),
-    (last_insert_rowid(), 'Moderate', '2', 3),
-    (last_insert_rowid(), 'Severe', '3', 4);
-```
-
-### 4. Date/Time Questions
-```sql
--- Create a date/time question
-CREATE TABLE datetime_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    date_format TEXT NOT NULL,
-    allow_time BOOLEAN DEFAULT false,
-    min_date DATE,
-    max_date DATE,
-    CONSTRAINT valid_date_format CHECK (
-        date_format IN ('YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY')
-    )
-);
-
--- Example: Last medication taken
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'When did you last take your medication?', 'datetime', true, 4);
-
-INSERT INTO datetime_questions (question_id, date_format, allow_time, min_date)
-VALUES (last_insert_rowid(), 'YYYY-MM-DD', true, date('now', '-30 days'));
-```
-
-### 5. Conditional Questions
-```sql
--- Create a conditional question
-CREATE TABLE conditional_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    parent_question_id INTEGER REFERENCES questions(question_id),
-    condition_type TEXT NOT NULL,
-    condition_value TEXT NOT NULL,
-    CONSTRAINT valid_condition CHECK (
-        condition_type IN ('equals', 'not_equals', 'greater_than', 'less_than')
-    )
-);
-
--- Example: Follow-up question based on previous response
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'Have you experienced any side effects?', 'true_false', true, 5);
-
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'Please describe the side effects:', 'text', false, 6);
-
-INSERT INTO conditional_questions (question_id, parent_question_id, condition_type, condition_value)
-VALUES (last_insert_rowid(), last_insert_rowid() - 1, 'equals', 'true');
-```
-
-### 6. File Upload Questions
-```sql
--- Create a file upload question
-CREATE TABLE file_upload_questions (
-    question_id INTEGER PRIMARY KEY REFERENCES questions(question_id),
-    allowed_types TEXT[] NOT NULL,
-    max_size_mb INTEGER NOT NULL,
-    max_files INTEGER DEFAULT 1,
-    CONSTRAINT valid_file_config CHECK (
-        max_size_mb > 0 AND max_files > 0
-    )
-);
-
--- Example: Upload medical records
-INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-VALUES (1, 'Please upload any relevant medical records', 'file_upload', false, 7);
-
-INSERT INTO file_upload_questions (question_id, allowed_types, max_size_mb, max_files)
-VALUES (last_insert_rowid(), ARRAY['pdf', 'jpg', 'png'], 10, 3);
-```
-
-These examples demonstrate how QuestSQL's DDL can handle various types of health questionnaire questions while maintaining data integrity and validation. Each question type includes:
-- Appropriate constraints for data validation
-- Support for required/optional questions
-- Display order management
-- Integration with the core questions table
-- Support for conditional logic where needed
-
-## Complete Questionnaire Example
-
-This section demonstrates how to create a complete 10-question health questionnaire using QuestSQL's DDL. We'll create a "Patient Health Assessment" questionnaire that includes various question types.
-
-### Setting Up ID Management
-```sql
--- First, ensure we have our ID sequence
-CREATE SEQUENCE IF NOT EXISTS questionnaire_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
--- Create a function to get the next questionnaire ID
-CREATE OR REPLACE FUNCTION get_next_questionnaire_id()
-RETURNS INTEGER AS $$
-BEGIN
-    RETURN nextval('questionnaire_id_seq');
-END;
-$$ LANGUAGE plpgsql;
-```
-
-### Creating the Questionnaire
-```sql
--- Create the questionnaire with a unique ID
-INSERT INTO questionnaires (questionnaire_id, title, description)
-VALUES (
-    get_next_questionnaire_id(),
-    'Patient Health Assessment',
-    'A comprehensive health assessment questionnaire covering various aspects of patient health and well-being'
-);
-
--- Store the questionnaire ID for later use
-DO $$
-DECLARE
-    v_questionnaire_id INTEGER;
-BEGIN
-    -- Get the current questionnaire ID
-    SELECT questionnaire_id INTO v_questionnaire_id
-    FROM questionnaires
-    WHERE title = 'Patient Health Assessment'
-    ORDER BY created_at DESC
-    LIMIT 1;
-
-    -- Ensure we have a valid questionnaire ID
-    IF v_questionnaire_id IS NULL THEN
-        RAISE EXCEPTION 'Failed to create questionnaire';
-    END IF;
-```
-
-### 1. Basic Information Questions
-```sql
-    -- Question 1: Patient Name
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'What is your full name?', 'text', true, 1)
-    RETURNING question_id INTO v_question_id;
-
-    -- Question 2: Date of Birth
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'What is your date of birth?', 'datetime', true, 2)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add datetime configuration with uniqueness check
-    INSERT INTO datetime_questions (question_id, date_format, allow_time, min_date)
-    VALUES (v_question_id, 'YYYY-MM-DD', false, date('1900-01-01'))
-    ON CONFLICT (question_id) DO UPDATE
-    SET date_format = EXCLUDED.date_format,
-        allow_time = EXCLUDED.allow_time,
-        min_date = EXCLUDED.min_date;
-```
-
-### 2. Health Status Questions
-```sql
-    -- Question 3: Overall Health Rating
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'How would you rate your overall health?', 'numeric_scale', true, 3)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add numeric scale configuration with uniqueness check
-    INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
-    VALUES (v_question_id, 1, 5, 'Poor', 'Excellent')
-    ON CONFLICT (question_id) DO UPDATE
-    SET min_value = EXCLUDED.min_value,
-        max_value = EXCLUDED.max_value,
-        left_label = EXCLUDED.left_label,
-        right_label = EXCLUDED.right_label;
-
-    -- Question 4: Primary Health Concerns
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'What are your primary health concerns? (Select all that apply)', 'multiple_choice', true, 4)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add multiple choice configuration with uniqueness check
-    INSERT INTO multiple_choice_questions (question_id, allow_other, max_selections)
-    VALUES (v_question_id, true, 5)
-    ON CONFLICT (question_id) DO UPDATE
-    SET allow_other = EXCLUDED.allow_other,
-        max_selections = EXCLUDED.max_selections;
-
-    -- Add options with uniqueness check
-    INSERT INTO question_options (question_id, option_text, option_value, display_order)
-    VALUES 
-        (v_question_id, 'Chronic Pain', 'chronic_pain', 1),
-        (v_question_id, 'Anxiety/Depression', 'anxiety_depression', 2),
-        (v_question_id, 'Sleep Issues', 'sleep_issues', 3),
-        (v_question_id, 'Digestive Problems', 'digestive_problems', 4),
-        (v_question_id, 'Other (please specify)', 'other', 5)
-    ON CONFLICT (question_id, option_value) DO UPDATE
-    SET option_text = EXCLUDED.option_text,
-        display_order = EXCLUDED.display_order;
-```
-
-### 3. Symptom Assessment
-```sql
-    -- Question 5: Symptom Severity Grid
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'Please rate the severity of your symptoms', 'grid', true, 5)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add grid configuration with uniqueness check
-    INSERT INTO grid_questions (question_id, row_type, column_type)
-    VALUES (v_question_id, 'symptom', 'severity')
-    ON CONFLICT (question_id) DO UPDATE
-    SET row_type = EXCLUDED.row_type,
-        column_type = EXCLUDED.column_type;
-
-    -- Add symptoms as rows with uniqueness check
-    INSERT INTO grid_rows (question_id, row_text, row_value, display_order)
-    VALUES 
-        (v_question_id, 'Pain', 'pain', 1),
-        (v_question_id, 'Fatigue', 'fatigue', 2),
-        (v_question_id, 'Anxiety', 'anxiety', 3),
-        (v_question_id, 'Sleep Quality', 'sleep', 4)
-    ON CONFLICT (question_id, row_value) DO UPDATE
-    SET row_text = EXCLUDED.row_text,
-        display_order = EXCLUDED.display_order;
-
-    -- Add severity scale as columns with uniqueness check
-    INSERT INTO grid_columns (question_id, column_text, column_value, display_order)
-    VALUES 
-        (v_question_id, 'None', '0', 1),
-        (v_question_id, 'Mild', '1', 2),
-        (v_question_id, 'Moderate', '2', 3),
-        (v_question_id, 'Severe', '3', 4)
-    ON CONFLICT (question_id, column_value) DO UPDATE
-    SET column_text = EXCLUDED.column_text,
-        display_order = EXCLUDED.display_order;
-```
-
-### 4. Medication and Treatment
-```sql
-    -- Question 6: Current Medications
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'Are you currently taking any medications?', 'true_false', true, 6)
-    RETURNING question_id INTO v_question_id;
-
-    -- Question 7: Medication Details (Conditional)
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'Please list your current medications:', 'text', false, 7)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add conditional logic with uniqueness check
-    INSERT INTO conditional_questions (question_id, parent_question_id, condition_type, condition_value)
-    VALUES (v_question_id, v_question_id - 1, 'equals', 'true')
-    ON CONFLICT (question_id) DO UPDATE
-    SET parent_question_id = EXCLUDED.parent_question_id,
-        condition_type = EXCLUDED.condition_type,
-        condition_value = EXCLUDED.condition_value;
-```
-
-### 5. Lifestyle and Habits
-```sql
-    -- Question 8: Exercise Frequency
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'How often do you exercise?', 'multiple_choice', true, 8)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add options with uniqueness check
-    INSERT INTO question_options (question_id, option_text, option_value, display_order)
-    VALUES 
-        (v_question_id, 'Never', 'never', 1),
-        (v_question_id, '1-2 times per week', '1_2', 2),
-        (v_question_id, '3-4 times per week', '3_4', 3),
-        (v_question_id, '5 or more times per week', '5_plus', 4)
-    ON CONFLICT (question_id, option_value) DO UPDATE
-    SET option_text = EXCLUDED.option_text,
-        display_order = EXCLUDED.display_order;
-```
-
-### 6. Quality of Life
-```sql
-    -- Question 9: Quality of Life Impact
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'How has your health condition affected your quality of life?', 'numeric_scale', true, 9)
-    RETURNING question_id INTO v_question_id;
-
-    -- Add numeric scale configuration with uniqueness check
-    INSERT INTO numeric_scale_questions (question_id, min_value, max_value, left_label, right_label)
-    VALUES (v_question_id, 1, 10, 'Not at all', 'Significantly')
-    ON CONFLICT (question_id) DO UPDATE
-    SET min_value = EXCLUDED.min_value,
-        max_value = EXCLUDED.max_value,
-        left_label = EXCLUDED.left_label,
-        right_label = EXCLUDED.right_label;
-```
-
-### 7. Additional Information
-```sql
-    -- Question 10: Additional Notes
-    INSERT INTO questions (questionnaire_id, question_text, question_type, is_required, display_order)
-    VALUES (v_questionnaire_id, 'Is there anything else you would like to share about your health?', 'text', false, 10)
-    RETURNING question_id INTO v_question_id;
-
-END $$;
-```
-
-### Verifying Questionnaire Structure
-```sql
--- Verify questionnaire creation
+-- OMOP observation mapping
+CREATE VIEW omop_observations AS
 SELECT 
-    q.questionnaire_id,
-    q.title,
-    COUNT(DISTINCT q.question_id) as total_questions,
-    COUNT(DISTINCT CASE WHEN q.is_required THEN q.question_id END) as required_questions
-FROM questionnaires q
-LEFT JOIN questions qs ON q.questionnaire_id = qs.questionnaire_id
-WHERE q.title = 'Patient Health Assessment'
-GROUP BY q.questionnaire_id, q.title;
-
--- Get all questions with their types and configurations
-SELECT 
-    q.display_order,
-    q.question_text,
-    q.question_type,
-    q.is_required,
-    CASE 
-        WHEN q.question_type = 'numeric_scale' THEN 
-            (SELECT CONCAT(min_value, ' to ', max_value, ' (', left_label, ' to ', right_label, ')')
-             FROM numeric_scale_questions 
-             WHERE question_id = q.question_id)
-        WHEN q.question_type = 'multiple_choice' THEN 
-            (SELECT GROUP_CONCAT(option_text)
-             FROM question_options 
-             WHERE question_id = q.question_id)
-        WHEN q.question_type = 'grid' THEN 
-            (SELECT CONCAT('Grid with ', COUNT(DISTINCT r.row_text), ' rows and ', 
-                          COUNT(DISTINCT c.column_text), ' columns')
-             FROM grid_questions g
-             LEFT JOIN grid_rows r ON g.question_id = r.question_id
-             LEFT JOIN grid_columns c ON g.question_id = c.question_id
-             WHERE g.question_id = q.question_id)
-        ELSE NULL
-    END as configuration
-FROM questions q
-WHERE q.questionnaire_id = (SELECT questionnaire_id FROM questionnaires WHERE title = 'Patient Health Assessment')
-ORDER BY q.display_order;
+    p.person_id,
+    m.concept_id as observation_concept_id,
+    r.created_at as observation_date,
+    r.response_value as value_as_string,
+    m2.concept_id as value_as_concept_id,
+    m.domain_id,
+    m.vocabulary_id
+FROM question_response_concept_mappings m
+JOIN responses r ON m.response_id = r.response_id
+JOIN questions q ON m.question_id = q.question_id
+JOIN persons p ON r.person_id = p.person_id
+LEFT JOIN clinical_concept_mappings m2 ON r.response_id = m2.response_id
+WHERE m2.mapped_type = 'response';
 ```
 
-This example demonstrates:
-1. Proper ID management using sequences
-2. Uniqueness constraints with ON CONFLICT clauses
-3. Transaction safety using DO blocks
-4. Variable scoping for ID tracking
-5. Verification queries for data integrity
+## OMOP Integration
 
-The resulting questionnaire includes:
-- Basic information (name, DOB)
-- Health status assessment
-- Symptom severity grid
-- Medication information
-- Lifestyle questions
-- Quality of life assessment
-- Open-ended feedback
+QuestSQL directly maps to OMOP CDM through concept relationships:
 
-## OMOP Vocabulary Mapping
-
-QuestSQL supports mapping questionnaire responses to OMOP standard vocabularies through a simple mapping system:
-
-### 1. OMOP Vocabulary Sources
+### Domain Mapping
 ```sql
--- Track OMOP vocabulary sources
-CREATE TABLE vocabulary_sources (
-    source_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    source_name TEXT NOT NULL UNIQUE,  -- e.g., 'SNOMED', 'RxNorm', 'ICD10'
-    source_version TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Example sources
-INSERT INTO vocabulary_sources (source_name, source_version) VALUES
-    ('SNOMED', '5.0'),
-    ('RxNorm', '2023-12-01'),
-    ('ICD10', '2023');
-```
-
-### 2. Response Mapping
-```sql
--- Map responses to OMOP concepts
-CREATE TABLE response_concept_mapping (
-    mapping_id INTEGER PRIMARY KEY DEFAULT get_next_id(),
-    question_id INTEGER REFERENCES questions(question_id),
-    response_value TEXT NOT NULL,
-    source_id INTEGER REFERENCES vocabulary_sources(source_id),
-    concept_code TEXT NOT NULL,  -- OMOP concept code
-    concept_name TEXT NOT NULL,  -- OMOP concept name
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure unique mappings per response
-    UNIQUE(question_id, response_value, source_id, concept_code)
-);
-
--- Example mappings
-INSERT INTO response_concept_mapping 
-    (question_id, response_value, source_id, concept_code, concept_name) 
-VALUES
-    -- Map "Yes" response to diabetes diagnosis in SNOMED
-    (1, 'Yes', 1, '73211009', 'Diabetes mellitus'),
-    -- Map "Metformin" response to RxNorm drug
-    (2, 'Metformin', 2, '6809', 'metformin');
-```
-
-### 3. Querying Mapped Data
-```sql
--- View for analyzing mapped responses
-CREATE VIEW mapped_responses AS
-SELECT 
-    r.response_id,
-    q.question_text,
-    r.response_value,
-    rc.concept_code,
-    rc.concept_name,
-    vs.source_name
-FROM responses r
-JOIN questions q ON r.question_id = q.question_id
-LEFT JOIN response_concept_mapping rc ON 
-    r.question_id = rc.question_id AND 
-    r.response_value = rc.response_value
-LEFT JOIN vocabulary_sources vs ON rc.source_id = vs.source_id;
-
--- Example query: Get all medication responses mapped to RxNorm
-SELECT 
+-- Example: Blood pressure measurement
+INSERT INTO questions (
+    questionnaire_id,
     question_text,
-    response_value,
-    concept_code,
-    concept_name
-FROM mapped_responses
-WHERE source_name = 'RxNorm'
-ORDER BY question_text;
-```
-
-This mapping system provides:
-1. Support for OMOP standard vocabularies
-2. Simple one-to-one response mapping
-3. Easy querying of mapped data
-4. Minimal additional complexity
-
-## Self-Documenting Data Model
-
-QuestSQL's data model serves as a self-documenting data dictionary, eliminating the need for separate documentation. This is achieved through several key features:
-
-### 1. Explicit Structure
-- Table and column names clearly describe their purpose
-- Foreign key relationships define data dependencies
-- Constraints enforce data rules and validations
-- Comments and descriptions are stored in the database
-
-```sql
--- Example of self-documenting table structure
-CREATE TABLE questions (
-    question_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
-    question_text TEXT NOT NULL,
-    question_type TEXT NOT NULL CHECK (question_type IN ('true_false', 'multiple_choice', 'text')),
-    is_required BOOLEAN DEFAULT false,
-    display_order INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Additional metadata can be added as needed
-    description TEXT,
-    help_text TEXT,
-    validation_rules JSON
+    question_type,
+    concept_id,
+    domain_id
+) VALUES (
+    1,
+    'What is your blood pressure?',
+    'numeric',
+    3004249,  -- Blood pressure concept
+    'Measurement'
 );
 
--- Add table and column comments
-COMMENT ON TABLE questions IS 'Stores all questions in questionnaires with their properties and constraints';
-COMMENT ON COLUMN questions.question_type IS 'Defines the type of question and its expected response format';
-```
-
-### 2. Standardized Concepts
-- Medical concepts are stored in a dedicated table
-- Each concept has a unique code and description
-- Concepts can be referenced across questions
-- Supports standardized terminology mapping
-
-```sql
--- Example of concept mapping
-CREATE TABLE concepts (
-    concept_id INTEGER PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    concept_type TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Link questions to concepts
-ALTER TABLE questions
-    ADD COLUMN concept_id INTEGER REFERENCES concepts(concept_id);
-```
-
-### 3. Response Validation
-- Response formats are enforced by constraints
-- Question types define valid response values
-- Validation rules are stored in the database
-- Error messages are part of the schema
-
-```sql
--- Example of response validation
-CREATE TABLE responses (
-    response_id INTEGER PRIMARY KEY,
-    questionnaire_id INTEGER REFERENCES questionnaires(questionnaire_id),
-    question_id INTEGER REFERENCES questions(question_id),
-    response_value TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Validation constraints
-    CONSTRAINT valid_response CHECK (
-        (SELECT question_type FROM questions WHERE question_id = responses.question_id) != 'true_false'
-        OR response_value IN ('true', 'false')
-    )
+-- Example: Medication adherence
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    concept_id,
+    domain_id
+) VALUES (
+    1,
+    'Are you taking your prescribed medications?',
+    'multiple_choice',
+    4023213,  -- Medication adherence concept
+    'Drug'
 );
 ```
 
-### 4. Queryable Metadata
-- All structural information is queryable
-- Relationships can be discovered through SQL
-- Constraints and rules are accessible
-- Documentation is always in sync with the data
-
+### Vocabulary Support
 ```sql
--- Example queries for metadata
+-- Example: LOINC-based lab question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    concept_id,
+    vocabulary_id
+) VALUES (
+    1,
+    'What was your last HbA1c result?',
+    'numeric',
+    3004410,  -- HbA1c concept
+    'LOINC'
+);
+
+-- Example: SNOMED-based condition question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    concept_id,
+    vocabulary_id
+) VALUES (
+    1,
+    'Have you been diagnosed with diabetes?',
+    'true_false',
+    201820,  -- Diabetes concept
+    'SNOMED'
+);
+```
+
+## Examples
+
+### Health Assessment Questionnaire
+```sql
+-- Create questionnaire
+INSERT INTO questionnaires (title, description) VALUES (
+    'Health Assessment',
+    'Basic health status assessment'
+);
+
+-- Add blood pressure question
+INSERT INTO questions (
+    questionnaire_id,
+    question_text,
+    question_type,
+    concept_id
+) VALUES (
+    1,
+    'What is your blood pressure?',
+    'numeric',
+    3004249  -- Blood pressure concept
+);
+
+-- Add response options
+INSERT INTO question_options (
+    question_id,
+    option_text,
+    option_value,
+    concept_id
+) VALUES 
+(1, 'Normal', 'normal', 4171374),
+(1, 'High', 'high', 4171373),
+(1, 'Low', 'low', 4171375);
+```
+
+### Query Examples
+```sql
 -- Get all questions with their concepts
 SELECT 
     q.question_text,
     c.name as concept_name,
-    c.description as concept_description
+    c.code as concept_code
 FROM questions q
-LEFT JOIN concepts c ON q.concept_id = c.concept_id;
+JOIN concepts c ON q.concept_id = c.concept_id;
 
--- Get validation rules for a question
+-- Get responses with standardized values
 SELECT 
-    q.question_text,
-    q.validation_rules
-FROM questions q
-WHERE q.validation_rules IS NOT NULL;
+    r.response_value,
+    c.name as standardized_value
+FROM responses r
+JOIN concepts c ON r.concept_id = c.concept_id;
 ```
 
-### 5. Version Control
-- Schema changes are tracked in SQL
-- Migration scripts document evolution
-- Historical changes are preserved
-- Documentation stays current
+## Validation and Constraints
 
+QuestSQL uses SQL constraints and assertions to ensure data integrity and validity:
+
+### 1. Question Type Validation
 ```sql
--- Example of version tracking
-CREATE TABLE schema_versions (
-    version_id INTEGER PRIMARY KEY,
-    version_number TEXT NOT NULL,
-    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    description TEXT,
-    migration_script TEXT
+-- Enforce valid question types
+CREATE TABLE questions (
+    -- ... other columns ...
+    question_type TEXT NOT NULL CHECK (
+        question_type IN (
+            'true_false',
+            'multiple_choice',
+            'select_all',
+            'grid',
+            'grid_row',
+            'loop',
+            'text',
+            'numeric',
+            'datetime'
+        )
+    )
 );
+
+-- Ensure grid questions have columns
+CREATE TRIGGER validate_grid_question
+AFTER INSERT ON questions
+BEGIN
+    SELECT CASE
+        WHEN NEW.question_type = 'grid' AND NOT EXISTS (
+            SELECT 1 FROM grid_columns 
+            WHERE question_id = NEW.question_id
+        )
+        THEN RAISE(ABORT, 'Grid questions must have at least one column')
+    END;
+END;
 ```
 
-This self-documenting approach ensures:
-1. Single source of truth for data structure
-2. Automatic synchronization of documentation and data
-3. Queryable metadata for analysis
-4. Standardized concept mapping
-5. Enforced data quality rules
+### 2. Response Validation
+```sql
+-- Validate numeric responses
+CREATE TRIGGER validate_numeric_response
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type = 'numeric'
+        )
+        AND CAST(NEW.response_value AS DECIMAL) IS NULL
+        THEN RAISE(ABORT, 'Invalid numeric response')
+    END;
+END;
+
+-- Validate datetime responses
+CREATE TRIGGER validate_datetime_response
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type = 'datetime'
+        )
+        AND datetime(NEW.response_value) IS NULL
+        THEN RAISE(ABORT, 'Invalid datetime response')
+    END;
+END;
+```
+
+### 3. Required Field Validation
+```sql
+-- Ensure required questions are answered
+CREATE TRIGGER validate_required_questions
+AFTER INSERT ON questionnaires
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.questionnaire_id = NEW.questionnaire_id
+            AND q.is_required = true
+            AND NOT EXISTS (
+                SELECT 1 FROM responses r
+                WHERE r.question_id = q.question_id
+            )
+        )
+        THEN RAISE(ABORT, 'Required questions must be answered')
+    END;
+END;
+```
+
+### 4. Concept Mapping Validation
+```sql
+-- Ensure questions have valid concept mappings
+CREATE TRIGGER validate_concept_mapping
+BEFORE INSERT ON questions
+BEGIN
+    SELECT CASE
+        WHEN NEW.concept_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM concepts c
+            WHERE c.concept_id = NEW.concept_id
+        )
+        THEN RAISE(ABORT, 'Invalid concept mapping')
+    END;
+END;
+
+-- Validate response concept mappings
+CREATE TRIGGER validate_response_concept
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN NEW.concept_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM concepts c
+            WHERE c.concept_id = NEW.concept_id
+        )
+        THEN RAISE(ABORT, 'Invalid response concept mapping')
+    END;
+END;
+```
+
+### 5. Grid Question Validation
+```sql
+-- Ensure grid questions have valid structure
+CREATE TRIGGER validate_grid_structure
+AFTER INSERT ON grid_columns
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type != 'grid'
+        )
+        THEN RAISE(ABORT, 'Grid columns only allowed for grid questions')
+    END;
+END;
+
+-- Validate grid responses
+CREATE TRIGGER validate_grid_response
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type = 'grid'
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM grid_columns gc
+            WHERE gc.question_id = NEW.question_id
+            AND gc.column_value = NEW.response_value
+        )
+        THEN RAISE(ABORT, 'Invalid grid response value')
+    END;
+END;
+```
+
+### 6. Loop Question Validation
+```sql
+-- Validate loop question structure
+CREATE TRIGGER validate_loop_structure
+BEFORE INSERT ON questions
+BEGIN
+    SELECT CASE
+        WHEN NEW.question_type = 'loop'
+        AND NEW.loop_question_id IS NULL
+        THEN RAISE(ABORT, 'Loop questions must reference a parent question')
+    END;
+END;
+
+-- Ensure loop responses have valid instances
+CREATE TRIGGER validate_loop_response
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type = 'loop'
+        )
+        AND NEW.loop_instance IS NULL
+        THEN RAISE(ABORT, 'Loop responses must specify an instance')
+    END;
+END;
+```
+
+### 7. Temporal Validation
+```sql
+-- Ensure response timestamps are valid
+CREATE TRIGGER validate_response_timestamp
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN NEW.created_at > CURRENT_TIMESTAMP
+        THEN RAISE(ABORT, 'Response timestamp cannot be in the future')
+    END;
+END;
+
+-- Validate questionnaire completion order
+CREATE TRIGGER validate_questionnaire_order
+BEFORE INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM responses r
+            WHERE r.questionnaire_id = NEW.questionnaire_id
+            AND r.created_at > NEW.created_at
+        )
+        THEN RAISE(ABORT, 'Responses must be inserted in chronological order')
+    END;
+END;
+```
+
+These validations ensure:
+- Data type consistency
+- Required field completion
+- Valid concept mappings
+- Proper question structure
+- Temporal integrity
+- Response validity
 
 ## ID Management and Uniqueness
 
 QuestSQL enforces data quality through various constraints and validation rules:
 
-[Previous validation section remains the same]
+### 1. Questionnaire-Level Constraints
+```sql
+-- Ensure questionnaire titles are unique
+CREATE UNIQUE INDEX idx_questionnaire_title ON questionnaires(title);
+
+-- Prevent duplicate questions within a questionnaire
+CREATE UNIQUE INDEX idx_question_order ON questions(questionnaire_id, display_order);
+
+-- Ensure response options are unique within a question
+CREATE UNIQUE INDEX idx_option_order ON question_options(question_id, display_order);
+```
+
+### 2. Response Validation
+```sql
+-- Ensure required questions are answered
+CREATE TRIGGER validate_required_questions
+AFTER INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.questionnaire_id = NEW.questionnaire_id
+            AND q.is_required = 1
+            AND NOT EXISTS (
+                SELECT 1 FROM responses r
+                WHERE r.question_id = q.question_id
+                AND r.questionnaire_id = NEW.questionnaire_id
+            )
+        )
+        THEN RAISE(ABORT, 'Required questions must be answered')
+    END;
+END;
+
+-- Validate numeric responses
+CREATE TRIGGER validate_numeric_responses
+AFTER INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN EXISTS (
+            SELECT 1 FROM questions q
+            WHERE q.question_id = NEW.question_id
+            AND q.question_type = 'numeric'
+            AND CAST(NEW.response_value AS DECIMAL) IS NULL
+        )
+        THEN RAISE(ABORT, 'Invalid numeric response')
+    END;
+END;
+```
+
+### 3. Concept Mapping Validation
+```sql
+-- Ensure questions map to valid concepts
+CREATE TRIGGER validate_question_concepts
+AFTER INSERT ON clinical_concept_mappings
+BEGIN
+    SELECT CASE
+        WHEN NEW.mapped_type = 'question'
+        AND NOT EXISTS (
+            SELECT 1 FROM concepts c
+            WHERE c.concept_id = NEW.concept_id
+            AND c.concept_type IN ('Measurement', 'Observation')
+        )
+        THEN RAISE(ABORT, 'Invalid question concept mapping')
+    END;
+END;
+
+-- Validate response concept mappings
+CREATE TRIGGER validate_response_concepts
+AFTER INSERT ON clinical_concept_mappings
+BEGIN
+    SELECT CASE
+        WHEN NEW.mapped_type = 'response'
+        AND NOT EXISTS (
+            SELECT 1 FROM concepts c
+            WHERE c.concept_id = NEW.concept_id
+            AND c.concept_type IN ('Value', 'Answer')
+        )
+        THEN RAISE(ABORT, 'Invalid response concept mapping')
+    END;
+END;
+```
+
+### 4. Temporal Constraints
+```sql
+-- Ensure response timestamps are valid
+CREATE TRIGGER validate_response_timestamps
+AFTER INSERT ON responses
+BEGIN
+    SELECT CASE
+        WHEN NEW.created_at > CURRENT_TIMESTAMP
+        THEN RAISE(ABORT, 'Response timestamp cannot be in the future')
+    END;
+END;
+
+-- Track concept mapping updates
+CREATE TRIGGER track_concept_mapping_updates
+AFTER UPDATE ON clinical_concept_mappings
+BEGIN
+    UPDATE clinical_concept_mappings
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE mapping_id = NEW.mapping_id;
+END;
+```
+
+### 5. Data Integrity Checks
+```sql
+-- Verify questionnaire completeness
+CREATE VIEW questionnaire_completeness AS
+SELECT 
+    q.questionnaire_id,
+    q.title,
+    COUNT(DISTINCT q.question_id) as total_questions,
+    COUNT(DISTINCT r.response_id) as answered_questions,
+    CASE 
+        WHEN COUNT(DISTINCT q.question_id) = COUNT(DISTINCT r.response_id)
+        THEN 1 ELSE 0 
+    END as is_complete
+FROM questionnaires q
+LEFT JOIN questions qs ON q.questionnaire_id = qs.questionnaire_id
+LEFT JOIN responses r ON qs.question_id = r.question_id
+GROUP BY q.questionnaire_id, q.title;
+
+-- Check concept mapping coverage
+CREATE VIEW concept_mapping_coverage AS
+SELECT 
+    q.questionnaire_id,
+    q.title,
+    COUNT(DISTINCT q.question_id) as total_questions,
+    COUNT(DISTINCT m.mapping_id) as mapped_questions,
+    CASE 
+        WHEN COUNT(DISTINCT q.question_id) = COUNT(DISTINCT m.mapping_id)
+        THEN 1 ELSE 0 
+    END as is_fully_mapped
+FROM questionnaires q
+LEFT JOIN questions qs ON q.questionnaire_id = qs.questionnaire_id
+LEFT JOIN clinical_concept_mappings m ON qs.question_id = m.question_id
+GROUP BY q.questionnaire_id, q.title;
+```
+
+## Analytics and Export
+
+QuestSQL provides built-in analytics capabilities and export options:
+
+### 1. Response Analysis
+```sql
+-- Basic response statistics
+SELECT 
+    q.question_text,
+    COUNT(r.response_id) as response_count,
+    AVG(CAST(r.response_value AS DECIMAL)) as avg_value
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+GROUP BY q.question_id, q.question_text;
+
+-- Response distribution
+SELECT 
+    r.response_value,
+    COUNT(*) as count,
+    COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () as percentage
+FROM responses r
+WHERE r.question_id = 1
+GROUP BY r.response_value;
+```
+
+### 2. Concept-Based Analysis
+```sql
+-- Analyze responses by clinical concept
+SELECT 
+    c.name as concept_name,
+    COUNT(*) as response_count,
+    AVG(CAST(r.response_value AS DECIMAL)) as avg_value
+FROM responses r
+JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+JOIN concepts c ON m.concept_id = c.concept_id
+GROUP BY c.concept_id, c.name;
+
+-- Track concept mapping coverage
+SELECT 
+    q.questionnaire_id,
+    COUNT(DISTINCT q.question_id) as total_questions,
+    COUNT(DISTINCT m.mapping_id) as mapped_questions,
+    COUNT(DISTINCT m.mapping_id) * 100.0 / COUNT(DISTINCT q.question_id) as mapping_coverage
+FROM questions q
+LEFT JOIN clinical_concept_mappings m ON q.question_id = m.question_id
+GROUP BY q.questionnaire_id;
+```
+
+### 3. Temporal Analysis
+```sql
+-- Response trends over time
+SELECT 
+    DATE(r.created_at) as response_date,
+    COUNT(*) as response_count,
+    AVG(CAST(r.response_value AS DECIMAL)) as avg_value
+FROM responses r
+WHERE r.question_id = 1
+GROUP BY DATE(r.created_at)
+ORDER BY response_date;
+
+-- Completion time analysis
+SELECT 
+    q.questionnaire_id,
+    MIN(r.created_at) as first_response,
+    MAX(r.created_at) as last_response,
+    JULIANDAY(MAX(r.created_at)) - JULIANDAY(MIN(r.created_at)) as completion_days
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+GROUP BY q.questionnaire_id;
+```
+
+### 4. Export Options
+```sql
+-- Export to CSV format
+.mode csv
+.output responses.csv
+SELECT 
+    q.question_text,
+    r.response_value,
+    r.created_at,
+    c.name as concept_name
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+LEFT JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+LEFT JOIN concepts c ON m.concept_id = c.concept_id;
+.output stdout
+
+-- Export to JSON format
+.mode json
+.output responses.json
+SELECT 
+    q.question_text,
+    r.response_value,
+    r.created_at,
+    c.name as concept_name
+FROM responses r
+JOIN questions q ON r.question_id = q.question_id
+LEFT JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+LEFT JOIN concepts c ON m.concept_id = c.concept_id;
+.output stdout
+```
+
+### 5. Quality Metrics
+```sql
+-- Response completeness
+SELECT 
+    q.questionnaire_id,
+    COUNT(DISTINCT q.question_id) as total_questions,
+    COUNT(DISTINCT r.response_id) as answered_questions,
+    COUNT(DISTINCT r.response_id) * 100.0 / COUNT(DISTINCT q.question_id) as completion_rate
+FROM questions q
+LEFT JOIN responses r ON q.question_id = r.question_id
+GROUP BY q.questionnaire_id;
+
+-- Concept mapping quality
+SELECT 
+    m.vocabulary_id,
+    COUNT(*) as mapping_count,
+    COUNT(DISTINCT m.concept_id) as unique_concepts,
+    COUNT(DISTINCT m.question_id) as mapped_questions
+FROM clinical_concept_mappings m
+GROUP BY m.vocabulary_id;
+```
+
+These analytics capabilities enable:
+- Response pattern analysis
+- Clinical concept tracking
+- Temporal trend analysis
+- Data quality monitoring
+- Flexible data export
+
+## Getting Started
+
+[Coming soon]
+
+## Contributing
+
+[Coming soon]
+
+## License
+
+[Coming soon]
+
+## Concept Mapping
+
+The model uses concept mapping similar to OMOP CDM:
+
+1. **Question Concepts**
+   - Each question can map to a standard clinical concept
+   - Example: A question about "Blood Pressure" maps to concept_id 3004249
+   - This enables standardized question interpretation
+
+2. **Response Concepts**
+   - Each response can map to a standard clinical value
+   - Example: A response of "High" to a blood pressure question maps to concept_id 4171373
+   - This enables standardized response interpretation
+
+3. **Option Concepts**
+   - Multiple choice options can map to standard values
+   - Example: "Yes" maps to concept_id 4188539
+   - This ensures consistent value representation
+
+4. **Grid Concepts**
+   - Grid rows and columns can map to standard concepts
+   - Example: A row for "Systolic" maps to concept_id 3004249
+   - This enables structured data collection
+
+### OMOP CDM Compatibility
+
+QuestSQL's concept mapping aligns directly with OMOP CDM's design principles:
+
+1. **Direct Mapping to OMOP**
+   - Questions map to OMOP Concepts (CONCEPT table)
+   - Responses map to OMOP Values (CONCEPT table)
+   - Grid elements map to OMOP Measurements (MEASUREMENT table)
+   - All mappings use standard OMOP concept IDs
+
+2. **Observation Structure**
+   - Questions become OMOP Observations
+   - Responses become OMOP Values
+   - Grid questions map to OMOP Measurements
+   - Maintains temporal relationships
+
+3. **Vocabulary Integration**
+   - Uses OMOP's standard vocabularies
+   - Supports SNOMED CT, LOINC, RxNorm, etc.
+   - Enables cross-vocabulary mapping
+   - Maintains concept hierarchies
+
+4. **Data Quality**
+   - Enforces standard concept usage
+   - Validates against OMOP vocabularies
+   - Maintains data consistency
+   - Supports quality checks
+
+### OMOP Mapping Support
+
+QuestSQL provides comprehensive support for mapping questionnaire elements to specific OMOP CDM domains and vocabularies:
+
+1. **Domain-Specific Mapping**
+   - **Condition/Disease Questions**
+     ```sql
+     -- Example: Diabetes screening question
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'Have you been diagnosed with diabetes?',
+         'multiple_choice',
+         201820,  -- Diabetes mellitus concept
+         'Condition'
+     );
+     ```
+
+   - **Measurement Questions**
+     ```sql
+     -- Example: Blood pressure measurement
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'What is your blood pressure?',
+         'grid',
+         3004249,  -- Blood pressure concept
+         'Measurement'
+     );
+     ```
+
+   - **Drug/Medication Questions**
+     ```sql
+     -- Example: Medication adherence
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         domain_id
+     ) VALUES (
+         1,
+         'Are you taking your prescribed medications?',
+         'multiple_choice',
+         4023213,  -- Medication adherence concept
+         'Drug'
+     );
+     ```
+
+2. **Vocabulary-Specific Development**
+   - **SNOMED CT Questions**
+     ```sql
+     -- Example: Pain assessment using SNOMED
+     INSERT INTO questions (
+         questionnaire_id,
+         question_text,
+         question_type,
+         concept_id,
+         vocabulary_id
+     ) VALUES (
+         1,
+         'Rate your pain level',
+         'grid',
+         36714913,  -- Pain severity concept
+         'SNOMED'
+     );
+     ```

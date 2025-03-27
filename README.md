@@ -258,6 +258,37 @@ SELECT * FROM data_dictionary WHERE validation_rules IS NOT NULL;
 SELECT * FROM data_dictionary WHERE conditional_logic IS NOT NULL;
 ```
 
+### Example Data Dictionary View
+
+The following table shows example data from the data dictionary view with realistic questionnaire data:
+
+| questionnaire_id | questionnaire_title | question_id | question_text | question_type | required | question_order | question_options | grid_structure | conditional_logic | validation_rules | question_concept_mappings | response_concept_mappings | response_count | first_response_date | last_response_date |
+|-----------------|-------------------|-------------|---------------|---------------|-----------|----------------|------------------|----------------|-------------------|------------------|------------------------|-------------------------|----------------|-------------------|------------------|
+| 1 | Health Assessment | 1 | What is your blood pressure? | grid | true | 1 | null | {"grid_type": "measurement", "rows": [{"row_text": "Systolic", "order_index": 1}, {"row_text": "Diastolic", "order_index": 2}], "columns": [{"column_text": "Normal", "order_index": 1}, {"column_text": "High", "order_index": 2}, {"column_text": "Low", "order_index": 3}]} | null | [{"rule_type": "range", "rule_value": "90-140", "error_message": "Systolic must be between 90 and 140"}] | [{"concept_id": 3004249, "vocabulary_id": "SNOMED", "domain_id": "Measurement", "mapping_type": "question"}] | [{"concept_id": 4171373, "vocabulary_id": "SNOMED", "domain_id": "Measurement", "mapping_type": "response"}] | 150 | 2024-01-01 | 2024-03-15 |
+| 1 | Health Assessment | 2 | Are you experiencing any of these symptoms? | select_all | true | 2 | [{"option_text": "Headache", "option_value": "headache", "order_index": 1}, {"option_text": "Fatigue", "option_value": "fatigue", "order_index": 2}, {"option_text": "Nausea", "option_value": "nausea", "order_index": 3}] | null | null | null | [{"concept_id": 36714913, "vocabulary_id": "SNOMED", "domain_id": "Condition", "mapping_type": "question"}] | [{"concept_id": 36714913, "vocabulary_id": "SNOMED", "domain_id": "Condition", "mapping_type": "response"}] | 145 | 2024-01-01 | 2024-03-15 |
+| 1 | Health Assessment | 3 | How often do you exercise? | multiple_choice | false | 3 | [{"option_text": "Never", "option_value": "never", "order_index": 1}, {"option_text": "1-2 times/week", "option_value": "1-2", "order_index": 2}, {"option_text": "3-4 times/week", "option_value": "3-4", "order_index": 3}, {"option_text": "5+ times/week", "option_value": "5+", "order_index": 4}] | null | {"parent_question_id": 2, "parent_response_value": "fatigue", "display_order": 1} | null | [{"concept_id": 40491925, "vocabulary_id": "SNOMED", "domain_id": "Observation", "mapping_type": "question"}] | [{"concept_id": 40491925, "vocabulary_id": "SNOMED", "domain_id": "Observation", "mapping_type": "response"}] | 120 | 2024-01-01 | 2024-03-15 |
+| 1 | Health Assessment | 4 | Rate your pain level | grid | true | 4 | null | {"grid_type": "rating", "rows": [{"row_text": "Current Pain", "order_index": 1}, {"row_text": "Average Pain", "order_index": 2}], "columns": [{"column_text": "None", "order_index": 1}, {"column_text": "Mild", "order_index": 2}, {"column_text": "Moderate", "order_index": 3}, {"column_text": "Severe", "order_index": 4}]} | null | [{"rule_type": "required", "rule_value": "true", "error_message": "Pain level must be specified"}] | [{"concept_id": 36714913, "vocabulary_id": "SNOMED", "domain_id": "Condition", "mapping_type": "question"}] | [{"concept_id": 36714913, "vocabulary_id": "SNOMED", "domain_id": "Condition", "mapping_type": "response"}] | 140 | 2024-01-01 | 2024-03-15 |
+| 1 | Health Assessment | 5 | Are you currently taking any medications? | true_false | true | 5 | null | null | null | null | [{"concept_id": 4023213, "vocabulary_id": "SNOMED", "domain_id": "Drug", "mapping_type": "question"}] | [{"concept_id": 4188539, "vocabulary_id": "SNOMED", "domain_id": "Drug", "mapping_type": "response"}] | 155 | 2024-01-01 | 2024-03-15 |
+
+This example shows:
+1. A grid question for blood pressure with validation rules
+2. A select-all question for symptoms
+3. A conditional multiple-choice question about exercise (only shown if fatigue is selected)
+4. A grid question for pain rating
+5. A true/false question about medications
+
+Each row demonstrates different aspects of the data dictionary view:
+- Different question types
+- Grid structures
+- Conditional logic
+- Validation rules
+- Concept mappings
+- Response statistics
+- Required/optional questions
+- Question ordering
+
+The data shows realistic clinical concepts and demonstrates how the view combines information from multiple tables into a single, queryable format.
+
 The data dictionary view is implemented in `views/01_data_dictionary.sql` and provides a convenient way to explore and analyze questionnaire metadata while maintaining the benefits of the normalized database structure.
 
 ## Architecture

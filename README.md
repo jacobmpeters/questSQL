@@ -103,9 +103,6 @@ erDiagram
     questionnaires ||--o{ questions : contains
     questions ||--o{ responses : receives
     questions ||--o{ question_options : has
-    questions ||--o{ clinical_concept_mappings : "maps to"
-    responses ||--o{ clinical_concept_mappings : "maps to"
-    clinical_concept_mappings ||--o{ concepts : "references"
     questions ||--o{ question_response_concept_mappings : "forms"
     responses ||--o{ question_response_concept_mappings : "forms"
     question_response_concept_mappings ||--o{ concepts : "maps to"
@@ -143,17 +140,6 @@ erDiagram
         integer display_order
     }
 
-    clinical_concept_mappings {
-        integer mapping_id PK
-        text mapped_type
-        integer question_id FK
-        integer response_id FK
-        integer concept_id FK
-        text vocabulary_id
-        timestamp created_at
-        timestamp updated_at
-    }
-
     question_response_concept_mappings {
         integer mapping_id PK
         integer question_id FK
@@ -187,15 +173,45 @@ erDiagram
 - Temporal data tracking
 - Explicit vocabulary tracking (SNOMED, RxNorm, etc.)
 
+### Storage Approaches
+
+QuestSQL supports two approaches for storing structured data:
+
+1. **Normalized Storage (Recommended)**
+   - Uses traditional relational tables with proper foreign key relationships
+   - Better for data integrity, querying, and maintaining relationships
+   - Example: Grid questions use separate tables for rows and columns
+   ```sql
+   CREATE TABLE grid_rows (
+       row_id INTEGER PRIMARY KEY,
+       grid_id INTEGER,
+       row_text TEXT,
+       order_index INTEGER,
+       FOREIGN KEY (grid_id) REFERENCES grid_questions(grid_id)
+   );
+   ```
+
+2. **Denormalized Storage (JSON)**
+   - Stores structured data as JSON in TEXT fields
+   - Simpler schema but less flexible for querying
+   - Example: Grid questions using JSON arrays
+   ```sql
+   CREATE TABLE grid_questions (
+       grid_id INTEGER PRIMARY KEY,
+       rows TEXT,  -- '["Headache", "Fatigue", "Nausea"]'
+       columns TEXT  -- '["Never", "Sometimes", "Often", "Always"]'
+   );
+   ```
+
+The normalized approach is recommended for most use cases as it provides better data integrity, querying capabilities, and maintainability. The denormalized approach may be suitable for highly flexible or temporary data structures.
+
 ## Clinical Concept Mapping
 
-The `clinical_concept_mappings` table provides explicit mapping between questionnaire elements and clinical concepts:
+The `question_response_concept_mappings` table provides explicit mapping between questionnaire elements and clinical concepts:
 
 ```sql
-CREATE TABLE clinical_concept_mappings (
+CREATE TABLE question_response_concept_mappings (
     mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- What is being mapped (question, response, or question-response pair)
-    mapped_type TEXT NOT NULL CHECK (mapped_type IN ('question', 'response', 'pair')),
     -- References to the mapped elements
     question_id INTEGER,
     response_id INTEGER,
@@ -203,14 +219,18 @@ CREATE TABLE clinical_concept_mappings (
     concept_id INTEGER NOT NULL,
     -- The vocabulary this concept comes from (e.g., 'SNOMED', 'RxNorm')
     vocabulary_id TEXT NOT NULL,
+    -- The OMOP domain this mapping belongs to
+    domain_id TEXT NOT NULL CHECK (
+        domain_id IN ('Condition', 'Measurement', 'Drug', 'Observation')
+    ),
     -- When this mapping was created/updated
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    -- Ensure we have the right combination of IDs based on mapped_type
+    -- Ensure we have the right combination of IDs
     CONSTRAINT valid_mapping CHECK (
-        (mapped_type = 'question' AND question_id IS NOT NULL AND response_id IS NULL) OR
-        (mapped_type = 'response' AND response_id IS NOT NULL AND question_id IS NULL) OR
-        (mapped_type = 'pair' AND question_id IS NOT NULL AND response_id IS NOT NULL)
+        (question_id IS NOT NULL AND response_id IS NULL) OR
+        (question_id IS NULL AND response_id IS NOT NULL) OR
+        (question_id IS NOT NULL AND response_id IS NOT NULL)
     ),
     -- Foreign key constraints
     FOREIGN KEY (question_id) REFERENCES questions(question_id),
@@ -219,33 +239,33 @@ CREATE TABLE clinical_concept_mappings (
 );
 
 -- Example mappings
-INSERT INTO clinical_concept_mappings (
-    mapped_type,
+INSERT INTO question_response_concept_mappings (
     question_id,
     concept_id,
-    vocabulary_id
+    vocabulary_id,
+    domain_id
 ) VALUES 
-    ('question', 1, 3004249, 'SNOMED'),  -- Blood pressure question
-    ('question', 2, 3012888, 'SNOMED');  -- Heart rate question
+    (1, 3004249, 'SNOMED', 'Measurement'),  -- Blood pressure question
+    (2, 3012888, 'SNOMED', 'Measurement');  -- Heart rate question
 
-INSERT INTO clinical_concept_mappings (
-    mapped_type,
+INSERT INTO question_response_concept_mappings (
     response_id,
     concept_id,
-    vocabulary_id
+    vocabulary_id,
+    domain_id
 ) VALUES 
-    ('response', 1, 4171373, 'SNOMED'),  -- High blood pressure response
-    ('response', 2, 4171374, 'SNOMED');  -- Normal blood pressure response
+    (1, 4171373, 'SNOMED', 'Measurement'),  -- High blood pressure response
+    (2, 4171374, 'SNOMED', 'Measurement');  -- Normal blood pressure response
 
 -- Map a specific question-response pair
-INSERT INTO clinical_concept_mappings (
-    mapped_type,
+INSERT INTO question_response_concept_mappings (
     question_id,
     response_id,
     concept_id,
-    vocabulary_id
+    vocabulary_id,
+    domain_id
 ) VALUES 
-    ('pair', 1, 1, 4171373, 'SNOMED');  -- High blood pressure observation
+    (1, 1, 4171373, 'SNOMED', 'Measurement');  -- High blood pressure observation
 ```
 
 ## Progressive Implementation
@@ -688,7 +708,7 @@ END;
 ```sql
 -- Ensure questions map to valid concepts
 CREATE TRIGGER validate_question_concepts
-AFTER INSERT ON clinical_concept_mappings
+AFTER INSERT ON question_response_concept_mappings
 BEGIN
     SELECT CASE
         WHEN NEW.mapped_type = 'question'
@@ -703,7 +723,7 @@ END;
 
 -- Validate response concept mappings
 CREATE TRIGGER validate_response_concepts
-AFTER INSERT ON clinical_concept_mappings
+AFTER INSERT ON question_response_concept_mappings
 BEGIN
     SELECT CASE
         WHEN NEW.mapped_type = 'response'
@@ -731,9 +751,9 @@ END;
 
 -- Track concept mapping updates
 CREATE TRIGGER track_concept_mapping_updates
-AFTER UPDATE ON clinical_concept_mappings
+AFTER UPDATE ON question_response_concept_mappings
 BEGIN
-    UPDATE clinical_concept_mappings
+    UPDATE question_response_concept_mappings
     SET updated_at = CURRENT_TIMESTAMP
     WHERE mapping_id = NEW.mapping_id;
 END;
@@ -770,7 +790,7 @@ SELECT
     END as is_fully_mapped
 FROM questionnaires q
 LEFT JOIN questions qs ON q.questionnaire_id = qs.questionnaire_id
-LEFT JOIN clinical_concept_mappings m ON qs.question_id = m.question_id
+LEFT JOIN question_response_concept_mappings m ON qs.question_id = m.question_id
 GROUP BY q.questionnaire_id, q.title;
 ```
 
@@ -807,7 +827,7 @@ SELECT
     COUNT(*) as response_count,
     AVG(CAST(r.response_value AS DECIMAL)) as avg_value
 FROM responses r
-JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+JOIN question_response_concept_mappings m ON r.response_id = m.response_id
 JOIN concepts c ON m.concept_id = c.concept_id
 GROUP BY c.concept_id, c.name;
 
@@ -818,7 +838,7 @@ SELECT
     COUNT(DISTINCT m.mapping_id) as mapped_questions,
     COUNT(DISTINCT m.mapping_id) * 100.0 / COUNT(DISTINCT q.question_id) as mapping_coverage
 FROM questions q
-LEFT JOIN clinical_concept_mappings m ON q.question_id = m.question_id
+LEFT JOIN question_response_concept_mappings m ON q.question_id = m.question_id
 GROUP BY q.questionnaire_id;
 ```
 
@@ -857,7 +877,7 @@ SELECT
     c.name as concept_name
 FROM responses r
 JOIN questions q ON r.question_id = q.question_id
-LEFT JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+LEFT JOIN question_response_concept_mappings m ON r.response_id = m.response_id
 LEFT JOIN concepts c ON m.concept_id = c.concept_id;
 .output stdout
 
@@ -871,7 +891,7 @@ SELECT
     c.name as concept_name
 FROM responses r
 JOIN questions q ON r.question_id = q.question_id
-LEFT JOIN clinical_concept_mappings m ON r.response_id = m.response_id
+LEFT JOIN question_response_concept_mappings m ON r.response_id = m.response_id
 LEFT JOIN concepts c ON m.concept_id = c.concept_id;
 .output stdout
 ```
@@ -894,7 +914,7 @@ SELECT
     COUNT(*) as mapping_count,
     COUNT(DISTINCT m.concept_id) as unique_concepts,
     COUNT(DISTINCT m.question_id) as mapped_questions
-FROM clinical_concept_mappings m
+FROM question_response_concept_mappings m
 GROUP BY m.vocabulary_id;
 ```
 

@@ -79,8 +79,9 @@ erDiagram
     questionnaires ||--o{ questions : contains
     questions ||--o{ responses : receives
     questions ||--o{ question_options : has
-    questions ||--o{ concepts : references
-    responses ||--o{ concepts : references
+    questions ||--o{ concepts : "maps to"
+    responses ||--o{ concepts : "maps to"
+    question_options ||--o{ concepts : "maps to"
 
     questionnaires {
         integer questionnaire_id PK
@@ -129,10 +130,108 @@ erDiagram
 ```
 
 ### Key Features
-- Questions and responses map to standard clinical concepts
+- Questions map to standard clinical concepts (e.g., "Blood Pressure" maps to concept_id 3004249)
+- Responses map to standard clinical values (e.g., "High" maps to concept_id 4171373)
+- Question options map to standard values (e.g., "Yes" maps to concept_id 4188539)
 - Built-in support for multiple question types
 - Standardized value sets through concept mapping
 - Temporal data tracking
+
+### Question-Response Pairs
+
+The fundamental mappable unit in QuestSQL is the question-response pair:
+
+```mermaid
+erDiagram
+    questions ||--o{ responses : "receives"
+    questions ||--o{ concepts : "maps to"
+    responses ||--o{ concepts : "maps to"
+
+    questions {
+        integer question_id PK
+        text question_text
+        integer concept_id FK
+    }
+
+    responses {
+        integer response_id PK
+        integer question_id FK
+        text response_value
+        integer concept_id FK
+    }
+
+    concepts {
+        integer concept_id PK
+        text code
+        text name
+    }
+```
+
+This design enables:
+
+1. **Complete Clinical Observations**
+   ```sql
+   -- Example: Blood pressure observation
+   INSERT INTO questions (
+       question_text,
+       concept_id
+   ) VALUES (
+       'What is your blood pressure?',
+       3004249  -- Blood pressure concept
+   );
+
+   INSERT INTO responses (
+       question_id,
+       response_value,
+       concept_id
+   ) VALUES (
+       1,
+       '140/90',
+       4171373  -- High blood pressure concept
+   );
+   ```
+
+2. **OMOP CDM Mapping**
+   ```sql
+   -- Map to OMOP OBSERVATION table
+   INSERT INTO observation (
+       person_id,
+       observation_concept_id,  -- From question.concept_id
+       observation_date,
+       value_as_concept_id,     -- From response.concept_id
+       value_as_string         -- From response.response_value
+   )
+   SELECT 
+       p.person_id,
+       q.concept_id,
+       r.created_at,
+       r.concept_id,
+       r.response_value
+   FROM questions q
+   JOIN responses r ON q.question_id = r.question_id
+   JOIN persons p ON r.person_id = p.person_id;
+   ```
+
+3. **Clinical Analysis**
+   ```sql
+   -- Example: Analyze blood pressure responses
+   SELECT 
+       c1.name as question_concept,
+       c2.name as response_concept,
+       COUNT(*) as frequency
+   FROM questions q
+   JOIN responses r ON q.question_id = r.question_id
+   JOIN concepts c1 ON q.concept_id = c1.concept_id
+   JOIN concepts c2 ON r.concept_id = c2.concept_id
+   WHERE q.concept_id = 3004249  -- Blood pressure
+   GROUP BY c1.name, c2.name;
+   ```
+
+This approach ensures:
+- Complete clinical context for each observation
+- Standardized concept mapping
+- Direct OMOP CDM compatibility
+- Consistent data analysis
 
 ## Progressive Implementation
 
